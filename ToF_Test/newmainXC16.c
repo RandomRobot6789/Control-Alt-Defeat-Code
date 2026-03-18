@@ -9,6 +9,9 @@
 #include "xc.h"
 #pragma config FNOSC = FRCDIV
 
+#pragma config OSCIOFNC = OFF
+#pragma config SOSCSRC = DIG
+
 enum drivemode {forward, left, right, decider};
 int steps = 0;
 int steps_needed = 139;
@@ -37,6 +40,9 @@ void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
 
 //Minimum is 132 ohms, but that would be operating with no electrical margins
 
+//If at any time a sensor appears to be reading 0xFFFF, it's not at the address you think it is and it's not getting read at all
+//because I'm a lazy bum and didn't check for slave ACKs.
+
 #include "settings.h"
 #include "VL53L0X.h"
 #include "i2c_driver.h"
@@ -47,6 +53,8 @@ void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
 
 #define EXPANDER_ADDR 0b0111000
 #define LED_ARR_ADDR 0b0111001
+
+#define ADDRESS_DEFAULT 0b0101001
 
 static uint8_t LATC = 0x00; //IO expander
 static uint8_t LATD = 0x00; //LED bank
@@ -79,18 +87,19 @@ void adjust_differential(uint16_t left) {
     old_left = left;
 }
 
-void canyon(uint16_t TOF_L, uint16_t TOF_M, uint16_t TOF_R){
-    static enum drivemode mode = forward;
+enum drivemode mode = forward;
+
+void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
     switch(mode){
         case forward://left and right steppers same direction, same speed
             _LATB2 = 0;
-            _LATA3 = 0;
-            if(TOF_M <= threshold){
+            _LATB4 = 0;
+            if(vTOF_M <= threshold){
                 mode = decider;
             }
             break;
         case decider:
-            if(TOF_L < TOF_R){
+            if(vTOF_L < vTOF_R){
                 _OC1IE = 1; //enabled
                 steps = 0;
                 mode = right;
@@ -102,7 +111,7 @@ void canyon(uint16_t TOF_L, uint16_t TOF_M, uint16_t TOF_R){
             }
             break;
         case left:
-            _LATA3 = 1;
+            _LATB4 = 1;
             _LATB2 = 0;
             if(steps >= steps_needed){
                 _OC1IE = 0;
@@ -110,7 +119,7 @@ void canyon(uint16_t TOF_L, uint16_t TOF_M, uint16_t TOF_R){
             }
             break;
         case right:
-            _LATA3 = 0;
+            _LATB4 = 0;
             _LATB2 = 1;
             if(steps >= steps_needed){
                 _OC1IE = 0;
@@ -120,6 +129,8 @@ void canyon(uint16_t TOF_L, uint16_t TOF_M, uint16_t TOF_R){
     }
 }
 
+
+struct sensor_instance sensors[NUM_OF_TOFS];
 
 int main(void) {
     _RCDIV = 0b001;;
@@ -143,8 +154,8 @@ int main(void) {
     _LATA6 = 0;
     _TRISA0 = 0; //Disable pin left
     _LATA0 = 0;// start with it on
-    _TRISA3 = 0;// direction pin
-    _LATA3 = 0;
+    _TRISB4 = 0;// direction pin
+    _LATB4 = 0;
     
     //Stepper 2/right pins
     _TRISB0 = 0; // pwm pin 4
@@ -179,14 +190,22 @@ int main(void) {
     write_expander(LED_ARR_ADDR, 0x00); 
     
     struct sensor_instance sensors[NUM_OF_TOFS];
+    struct sensor_instance default_address_dummy = construct_sensor_instance();
     for (int i=0; i<NUM_OF_TOFS; i++) {
 //        LATC = LATC && (1 << i); 
         LATC = LATC | (1 << (2*i)); //temporary hack, remove with new pcb
-        write_expander(EXPANDER_ADDR, LATC);
+        for(int k=0; k<100; k++) {
+            write_expander(EXPANDER_ADDR, LATC);
+        }
         sensors[i] = construct_sensor_instance();
+        uint8_t new_addr = 0x40 + i;
+        setAddress(&(sensors[i]), new_addr);
+        //Make sure that worked:
+        for(int k=0; k<100; k++) {
+            writeReg(&(default_address_dummy), I2C_SLAVE_DEVICE_ADDRESS, new_addr & 0x7F);
+        }
         init(&(sensors[i]), true);
         startContinuous(&(sensors[i]), 0);
-        setAddress(&(sensors[i]), 0x40 + i);
     }
     
 
