@@ -280,7 +280,7 @@ int main(void) {
     config_pins_for_ad();
     config_ad();
     
-    _RCDIV = 0b001;;
+    _RCDIV = 0b001;
     OC1CON1 = 0; // sets all settings to 0 for 1 and 2 ALL for pin 14/RA6
     OC1CON2 = 0;
     OC1CON1bits.OCTSEL = 0b111; // system clock chosen
