@@ -113,7 +113,7 @@ double pwm_output = 0;// control signal in line following
 
 double interval = .01;//if we use a time interval
 
-double kd = .7;//proportional and derivative gains
+double kd = .1;//proportional and derivative gains
 double kp = 1.3;
 
 double fcy = 2000000;
@@ -215,7 +215,7 @@ void line_follower(double leftval, double midval, double rightval){
         double error = midval - goal;
         
         static double olderror = 0;
-        double alpha = .8;
+        static double alpha = 0;
         error = (alpha*olderror) + ((1-alpha)*error);
         double error_derivative = error - olderror;
         olderror = error;
@@ -276,6 +276,10 @@ void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
 struct sensor_instance sensors[NUM_OF_TOFS];
 
 int main(void) {
+
+    config_pins_for_ad();
+    config_ad();
+    
     _RCDIV = 0b001;;
     OC1CON1 = 0; // sets all settings to 0 for 1 and 2 ALL for pin 14/RA6
     OC1CON2 = 0;
@@ -289,22 +293,15 @@ int main(void) {
     OC2CON2bits.SYNCSEL = 0b11111; //
     OC2CON2bits.OCTRIG = 0; //
     
-    ANSA = 0;
-    ANSB = 0;
-    
     //Stepper 1/left pins
     _TRISA6 = 0; //pwm pin 14
     _LATA6 = 0;
-    _TRISA0 = 0; //Disable pin left
-    _LATA0 = 0;// start with it on
     _TRISB4 = 0;// direction pin
     _LATB4 = 0;
     
     //Stepper 2/right pins
     _TRISB0 = 0; // pwm pin 4
     _LATB0 = 0;
-    _TRISB1 = 0;//disable pin
-    _LATB1 = 0;
     _TRISB2 = 0;// direction pin
     _LATB2 = 0;
     
@@ -356,8 +353,8 @@ int main(void) {
         midval = (double)ADC1BUF0/4095*3.3;
         rightval = (double)ADC1BUF1/4095*3.3;
         
-        TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
-        TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
+        //TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
+        //TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
         TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
         
         line_follower(leftval, midval, rightval);
