@@ -400,7 +400,7 @@ int main(void) {
                 }
                         
         }
-        canyon(TOF_l, TOF_m, TOF_r);
+
     }
     return 0;
 }
