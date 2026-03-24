@@ -101,8 +101,8 @@ double leftval = 0; //pin 13
 double midval = 0; //read from pin 14
 double rightval = 0; // pin 15
 
-double goal = 2.6;//These are the midline values for each sensor mid sensor
-double goal_l = 2.5; //left sensor
+double goal = 2.5;//These are the midline values for each sensor mid sensor
+double goal_l = 2.75; //left sensor
 double goal_r = 2.5; // right sensor
 
 double freq_right = 0; //the pwm frequencies at which the motor will drive
@@ -114,18 +114,19 @@ double pwm_output = 0;// control signal in line following
 double interval = .01;//if we use a time interval
 
 double kd = .1;//proportional and derivative gains
-double kp = 1.3;
+double kp = 1.25;
 
 double fcy = 2000000;
 
-double max_freq = 600;//This is the fastest we want the steppers to move
-double min_freq = 60;//slowest
-double std_freq = 327;
+double max_freq = 351;//This is the fastest we want the steppers to move
+double min_freq = 85;//slowest
+double std_freq = 218;
 
 enum drivemode {forward, left, right, decider};
 int steps = 0;
 int steps_needed = 139;
 uint16_t threshold = 165;
+
 
 #define EXPANDER_ADDR 0b0111000
 #define LED_ARR_ADDR 0b0111001
@@ -349,15 +350,57 @@ int main(void) {
     }
     
     while(1){
+        static int state = 1;
         leftval = (double)ADC1BUF13/4095*3.3;//collect voltages from QRD's
         midval = (double)ADC1BUF0/4095*3.3;
         rightval = (double)ADC1BUF1/4095*3.3;
         
-        //TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
-        //TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
+        TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
+        TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
         TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
         
-        line_follower(leftval, midval, rightval);
+        //line_follower(leftval, midval, rightval);
+        switch(state){
+            case 1:
+                line_follower(leftval, midval, rightval);
+                if(TOF_l <= 300 && TOF_r <= 300){
+                    _OC1IE = 1; //enabled
+                    steps = 0;
+                    state = 3;
+                }
+                break;
+            case 2:
+                canyon(TOF_l, TOF_m, TOF_r);
+                if(leftval < 2.55){
+                    _OC1IE = 1;
+                    steps = 0;
+                    state = 4;
+                }
+                break;
+            case 3:
+                OC1RS = 12049;
+                OC2RS = 12049;
+                OC1R = 6000;
+                OC2R = 6000;
+                if(steps >= 200){
+                    _OC1IE = 0;
+                    steps = 0;
+                    state = 2;
+                }
+                break;
+            case 4:
+                OC1RS = 12049;
+                OC2RS = 12049;
+                OC1R = 0;
+                OC2R = 6000;
+                if(steps >= 240){
+                    _OC1IE = 0;
+                    steps = 0;
+                    state = 1;
+                }
+                        
+        }
+        canyon(TOF_l, TOF_m, TOF_r);
     }
     return 0;
 }
