@@ -173,7 +173,7 @@ enum drivemode mode = forward;
 void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
     switch(mode){
         case forward://left and right steppers same direction, same speed
-            _LATB2 = 0;
+            _LATB1 = 0;
             _LATB4 = 0;
             if(vTOF_M <= threshold){
                 mode = decider;
@@ -193,7 +193,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
             break;
         case left:
             _LATB4 = 1;
-            _LATB2 = 0;
+            _LATB1 = 0;
             if(steps >= steps_needed){
                 _OC1IE = 0;
                 mode = forward;
@@ -201,7 +201,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
             break;
         case right:
             _LATB4 = 0;
-            _LATB2 = 1;
+            _LATB1 = 1;
             if(steps >= steps_needed){
                 _OC1IE = 0;
                 mode = forward;
@@ -306,8 +306,8 @@ int main(void) {
     //Stepper 2/right pins
     _TRISB0 = 0; // pwm pin 4
     _LATB0 = 0;
-    _TRISB2 = 0;// direction pin
-    _LATB2 = 0;
+    _TRISB1 = 0;// direction pin
+    _LATB1 = 0;
     
     //switch pin - pull down resistor
     //_TRISB7 = 1;//input
@@ -362,7 +362,7 @@ int main(void) {
         //sampleval = (double)ADC1BUF12/4095*3.3;
         
         //TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
-        TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
+        //TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
         TOF_samp = readRangeContinuousMillimeters(&(sensors[LEFT]));
         
         
@@ -395,11 +395,11 @@ int main(void) {
             case 3: //turning code dependent on if ball is black or white
                 if(left = 1){
                     _LATB4 = 1;
-                    _LATB2 = 0;
+                    _LATB1 = 0;
                 }
                 else{
                     _LATB4 = 0;
-                    _LATB2 = 1;
+                    _LATB1 = 1;
                 }
 
                 if(steps >= 200 && ball == 1){
@@ -415,11 +415,11 @@ int main(void) {
             case 5:
                 if(ball == 1){
                     _LATB4 = 0;
-                    _LATB2 = 0;
+                    _LATB1 = 0;
                 }
                 else{
                     _LATB4 = 1;
-                    _LATB2 = 1;
+                    _LATB1 = 1;
                 }
 
                 if(steps <= 400 && ball == 1){
