@@ -170,7 +170,7 @@ enum drivemode mode = forward;
 void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
     switch(mode){
         case forward://left and right steppers same direction, same speed
-            _LATB2 = 0;
+            _LATA4 = 0;
             _LATB4 = 0;
             if(vTOF_M <= threshold){
                 mode = decider;
@@ -190,7 +190,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
             break;
         case left:
             _LATB4 = 1;
-            _LATB2 = 0;
+            _LATA4 = 0;
             if(steps >= steps_needed){
                 _OC3IE = 0;
                 mode = forward;
@@ -198,7 +198,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
             break;
         case right:
             _LATB4 = 0;
-            _LATB2 = 1;
+            _LATA4 = 1;
             if(steps >= steps_needed){
                 _OC3IE = 0;
                 mode = forward;
@@ -267,10 +267,10 @@ void line_follower(double leftval, double midval, double rightval){
         }
 }
 
-void __attribute__((interrupt, no_auto_psv)) _OC2Interrupt(void){
+void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
     
     steps ++;
-    _OC2IF = 0;
+    _OC3IF = 0;
     
 }
 
@@ -295,16 +295,16 @@ int main(void) {
     OC2CON2bits.OCTRIG = 0; //
     
     //Stepper 1/left pins
-    _TRISA6 = 0; //pwm pin 14
-    _LATA6 = 0;
+    _TRISB1 = 0; //pwm pin 14
+    _LATB1 = 0;
     _TRISB4 = 0;// direction pin
     _LATB4 = 0;
     
     //Stepper 2/right pins
     _TRISB0 = 0; // pwm pin 4
     _LATB0 = 0;
-    _TRISB2 = 0;// direction pin
-    _LATB2 = 0;
+    _TRISA4 = 0;// direction pin
+    _LATA4 = 0;
     
     //switch pin - pull down resistor
     //_TRISB7 = 1;//input
@@ -352,8 +352,8 @@ int main(void) {
     while(1){
         static int state = 1;
         leftval = (double)ADC1BUF13/4095*3.3;//collect voltages from QRD's
-        midval = (double)ADC1BUF0/4095*3.3;
-        rightval = (double)ADC1BUF1/4095*3.3;
+        midval = (double)ADC1BUF1/4095*3.3;
+        rightval = (double)ADC1BUF14/4095*3.3;
         
         TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
         TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
