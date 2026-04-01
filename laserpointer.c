@@ -403,10 +403,8 @@ int main(void) {
                     state = 1;
                     
                 }
-            break;
+                break;
             case 5:
-                OC3R = 0;
-                OC2R = 0;
                 break;
                 
            
