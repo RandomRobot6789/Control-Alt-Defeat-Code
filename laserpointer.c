@@ -114,7 +114,7 @@ double pwm_output = 0;// control signal in line following
 double interval = .01;//if we use a time interval
 
 double kd = 0;//proportional and derivative gains
-double kp = 1.5;
+double kp = 1;
 
 double fcy = 2000000;
 
@@ -353,11 +353,11 @@ int main(void) {
         static int steps_needed = 68;
         static int state = 1;
         static int turned = 0;
-        leftval = (double)ADC1BUF13/4095*3.3;//collect voltages from QRD's
-        midval = (double)ADC1BUF1/4095*3.3;
+        leftval = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
+        midval = (double)ADC1BUF13/4095*3.3;
         rightval = (double)ADC1BUF14/4095*3.3;
         
-        //TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
+        TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
         //TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
         //TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
         
@@ -365,15 +365,15 @@ int main(void) {
         switch(state){
             case 1:
                 line_follower(leftval, midval, rightval);
-                if((leftval < 2.5 && rightval < 2.9) && turned == 0){
+                if((leftval < 2.5 && midval < 2.8) && turned == 0){
                     _OC3IE = 1; //enabled
                     steps = 0;
                     state = 3;
                 }
-                if(TOF_m <= threshold && turned == 1){
-                    _OC2R = 0;
-                    _OC3R = 0;
-                    state = 5;
+                else if(TOF_m <= 300 && turned == 1){
+                    _OC3IE = 1;
+                    state = 3;
+                    steps_needed = 100;
                 }
                 break;
             case 3:
@@ -388,16 +388,23 @@ int main(void) {
                     steps = 0;
                     state = 4;
                 }
+                else if(steps >= steps_needed && turned == 1){
+                    _OC3IE = 0;
+                    OC2R = 0;
+                    OC3R = 0;
+                    state = 5;
+                }
                 break;
             case 4:
                 OC3RS = 12049;
                 OC2RS = 12049;
                 OC3R = 6000;
                 OC2R = 6000;
-                _LATB4 = 0;
-                _LATA4 = 1;
+                _LATB4 = 1;
+                _LATA4 = 0;
                 if(steps >= steps_needed){
                     _OC3IE = 0;
+                    _LATB4 = 0;
                     steps = 0;
                     turned = 1;
                     state = 1;
