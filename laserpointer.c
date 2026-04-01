@@ -365,10 +365,15 @@ int main(void) {
         switch(state){
             case 1:
                 line_follower(leftval, midval, rightval);
-                if(leftval < 2.5 && rightval < 2.9){
+                if((leftval < 2.5 && rightval < 2.9) && turned == 0){
                     _OC3IE = 1; //enabled
                     steps = 0;
                     state = 3;
+                }
+                if(TOF_m <= threshold && turned == 1){
+                    _OC2R = 0;
+                    _OC3R = 0;
+                    state = 5;
                 }
                 break;
             case 3:
@@ -383,11 +388,6 @@ int main(void) {
                     steps = 0;
                     state = 4;
                 }
-                else if(steps >= steps_needed && turned == 1){
-                    _OC3IE = 1;
-                    steps = 0;
-                    state = 5;
-                }
                 break;
             case 4:
                 OC3RS = 12049;
@@ -397,10 +397,10 @@ int main(void) {
                 _LATB4 = 0;
                 _LATA4 = 1;
                 if(steps >= steps_needed){
+                    _OC3IE = 0;
                     steps = 0;
-                    steps_needed = 500;
                     turned = 1;
-                    state = 3;
+                    state = 1;
                     
                 }
             break;
