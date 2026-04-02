@@ -169,13 +169,14 @@ void adjust_differential(uint16_t left) {
     old_left = left;
 }
 
-enum drivemode mode = forward;
 
-void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R){
-    switch(mode){
-        case forward://left and right steppers same direction, same speed
-            _LATA4 = 0;
-            _LATB4 = 0;
+
+void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval){
+    switch(state){
+        case 0:
+            forward();
+            state = 1;
+        case 1://left and right steppers same direction, same speed
             if(vTOF_M <= threshold){
                 mode = decider;
             }
@@ -603,6 +604,8 @@ int main(void) {
                 TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
                 TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
                 TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
+                leftval = (double)ADC1BUF1/4095*3.3;
+                
                 
                 
 
