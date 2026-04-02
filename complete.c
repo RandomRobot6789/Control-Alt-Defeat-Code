@@ -108,6 +108,8 @@ double goal_r = 2.5; // right sensor
 double freq_right = 0; //the pwm frequencies at which the motor will drive
 double freq_left = 0;
 
+int i = 0;
+
 
 double pwm_output = 0;// control signal in line following
 
@@ -122,10 +124,12 @@ double max_freq = 351;//This is the fastest we want the steppers to move
 double min_freq = 85;//slowest
 double std_freq = 218;
 
+
 enum drivemode {forward, left, right, decider};
 int steps = 0;
-int steps_needed = 139;
+
 uint16_t threshold = 165;
+
 
 
 #define EXPANDER_ADDR 0b0111000
@@ -266,6 +270,214 @@ void line_follower(double leftval, double midval, double rightval){
             _LATB7 = 1;
         }
 }
+void straight(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 6000;
+    OC3R = 6000;
+    _LATB4 = 0;
+    _LATA4 = 0;
+}
+void left_center(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 6000;
+    OC3R = 6000;
+    _LATB4 = 1;
+    _LATA4 = 0;
+}
+void right_center(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 6000;
+    OC3R = 6000;
+    _LATB4 = 0;
+    _LATA4 = 1;
+}
+void left_pivot(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 6000;
+    OC3R = 0;
+    _LATB4 = 0;
+    _LATA4 = 0;
+}
+void right_pivot(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 0;
+    OC3R = 6000;
+    _LATB4 = 0;
+    _LATA4 = 0;
+}
+void reverse(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 6000;
+    OC3R = 6000;
+    _LATB4 = 1;
+    _LATA4 = 1;
+}
+void stop(){
+    OC3RS = 12049;
+    OC2RS = 12049;
+    OC2R = 0;
+    OC3R = 0;
+    _LATB4 = 0;
+    _LATA4 = 0;
+}
+
+void findline1(){
+    static int state = 1;
+    swtich(state){
+        case 1:
+            forward();
+            if(leftval < 2.8 && rightval <2.8){
+                steps_needed = 270;
+                state = 2;
+            } 
+            break;
+        case 2:
+            left_pivot();
+            if(steps >= steps_needed){
+                OC3IE = 0;
+                steps = 0;
+                state = 1;
+                ss = line;
+            }
+            break;
+            
+    }
+}
+
+void samp_collect(int turn_steps, int move_steps){
+    static int state = 1;
+    switch(state){
+        case 1:
+            _OC3IE = 1;
+            steps = 0;
+            right_center();
+            state = 2;
+            break;
+        case 2:
+            if(steps >= turn_steps){
+                steps = 0;
+                forward();
+                state = 3;
+            }
+            break;
+        case 3:
+            if(steps >= move_steps){
+                steps = 0;
+                stop();
+                state = 4;
+                i = 0;
+            }
+            break;
+        case 4:
+            i++;
+            if(i >= 25){
+                steps = 0;
+                reverse();
+                state = 5;
+                i = 0;
+            }
+            break;
+        case 5:
+            if(steps >= move_steps){
+                steps = 0;
+                left_center();
+                state = 6;
+            }
+            break;
+        case 6:
+            if(steps >= turn_steps){
+                _OC3IE = 0;
+                steps = 0;
+                ss = line;
+            }
+            break;   
+    }
+}
+
+void Solenoid_On(int pin){
+    LATC = LATC | (1 << pin);
+    write_expander(EXPANDER_ADDR, LATC);
+}
+
+void Solenoid_Off(int pin){
+    LATC = LATC & (~(1 << pin));
+    write_expander(EXPANDER_ADDR, LATC);
+}
+
+
+
+
+void samp_return(int turn_steps, int move_steps, double qrd_val){
+    static int state = 1;
+    static int white = 1;
+    switch(state){
+        case 1:
+            _OC3IE = 1;
+            steps = 0;
+            if(qrd_val < 2.5){
+                left_center();
+                white = 1;
+            }
+            else{
+                right_center();  
+                white = 0;
+            }
+            state = 2;
+            break;
+        case 2:
+            if(steps >= turn_steps){
+                steps = 0;
+                forward();
+                state = 3;
+            }
+            break;
+        case 3:
+            if(steps >= move_steps){
+                steps = 0;
+                stop();
+                if(white ==1){
+                    Solenoid_On(5);
+                }
+                else{
+                    Solenoid_On(6);
+                }
+                state = 4;
+                i = 0;
+            }
+            break;
+        case 4:
+            i++;
+            if(i >= 25){
+                steps = 0;
+                Solenoid_Off(5);
+                Solenoid_Off(6);
+                reverse();
+                state = 5;
+                i = 0;
+            }
+            break;
+        case 5:
+            if(steps >= move_steps){
+                steps = 0;
+                left_center();
+                state = 6;
+            }
+            break;
+        case 6:
+            if(steps >= turn_steps){
+                _OC3IE = 0;
+                steps = 0;
+                ss = line;
+            }
+            break;   
+    }
+}
 
 void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
     
@@ -275,6 +487,10 @@ void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
 }
 
 struct sensor_instance sensors[NUM_OF_TOFS];
+
+enum superstate {start, line, collection, canyon, samp_return, data_trans} 
+
+enum superstate ss = start;
 
 int main(void) {
 
@@ -350,9 +566,47 @@ int main(void) {
     }
     
     while(1){
+        switch(ss){
+            case start:
+                findline1();
+                break;
+            case line:
+                TOF_samp = readRangeContinuousMillimeters(&(sensors[SAMPLE_RETURN]));
+                TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
+                TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
+                
+                leftval = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
+                midval = (double)ADC1BUF13/4095*3.3;
+                rightval = (double)ADC1BUF14/4095*3.3;
+                linefollower(leftval, midval, rightval);
+                if(_RB12 == 1 && ball == 0){
+                    ss = collection;
+                }
+                if((ball == 1 && TOF_SAMP < threshold) && (TOF_R > threshold)){
+                    ss = samp_return;
+                }
+                if(TOF_l < threshold && TOF_r < threshold){
+                    ss = canyon;
+                }
+                if(leftval < 2.6 && midval < 2.9){
+                    ss = data_trans;
+                }
+                break;
+            case collection:
+                samp_collect(200,400);
+                break;
+            case samp_return:
+                sampval = (double)ADC1BUF0/4095*3.3;
+                samp_return(140, 250, sampval);
+                break;
+            case canyon:
+                TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
+                TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
+                TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
+                
+                
 
-        switch
-
+        }
     }
     return 0;
 }
