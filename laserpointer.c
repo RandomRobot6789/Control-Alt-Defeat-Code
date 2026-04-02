@@ -357,23 +357,27 @@ int main(void) {
         midval = (double)ADC1BUF13/4095*3.3;
         rightval = (double)ADC1BUF14/4095*3.3;
         
-        TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
+        
         //TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
         //TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
         
         //line_follower(leftval, midval, rightval);
         switch(state){
             case 1:
+                
                 line_follower(leftval, midval, rightval);
                 if((leftval < 2.5 && midval < 2.8) && turned == 0){
                     _OC3IE = 1; //enabled
                     steps = 0;
                     state = 3;
                 }
-                else if(TOF_m <= 300 && turned == 1){
-                    _OC3IE = 1;
-                    state = 3;
-                    steps_needed = 100;
+                else if(turned==1) {
+                    TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
+                    if (TOF_m <= 300){
+                        _OC3IE = 1;
+                        state = 3;
+                        steps_needed = 100;
+                    }
                 }
                 break;
             case 3:
