@@ -366,7 +366,7 @@ int main(void) {
             case 1:
                 
                 line_follower(leftval, midval, rightval);
-                if((leftval < 2.5 && midval < 2.8) && turned == 0){
+                if((leftval < 2.7 && midval < 2.9) && turned == 0){
                     _OC3IE = 1; //enabled
                     steps = 0;
                     state = 3;
