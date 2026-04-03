@@ -171,46 +171,6 @@ void adjust_differential(uint16_t left) {
 
 
 
-void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval){
-    switch(state){
-        case 0:
-            forward();
-            state = 1;
-        case 1://left and right steppers same direction, same speed
-            if(vTOF_M <= threshold){
-                mode = decider;
-            }
-            break;
-        case decider:
-            if(vTOF_L < vTOF_R){
-                _OC3IE = 1; //enabled
-                steps = 0;
-                mode = right;
-            }
-            else{
-                _OC3IE = 1;
-                steps = 0;
-                mode = left;
-            }
-            break;
-        case left:
-            _LATB4 = 1;
-            _LATA4 = 0;
-            if(steps >= steps_needed){
-                _OC3IE = 0;
-                mode = forward;
-            }
-            break;
-        case right:
-            _LATB4 = 0;
-            _LATA4 = 1;
-            if(steps >= steps_needed){
-                _OC3IE = 0;
-                mode = forward;
-            }
-            break;
-    }
-}
 
 
 
@@ -480,6 +440,59 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
     }
 }
 
+void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, turn_steps, pivot_steps){
+    switch(state){
+        case 0:
+            forward();
+            state = 1;
+        case 1://left and right steppers same direction, same speed
+            if(vTOF_M <= threshold){
+                state = 2;
+            }
+            else if(qrdval <= 2.4){
+                if(vTOF_L < vTOF_R){
+                    right_pivot();
+                }
+                else{
+                    left_pivot()
+                }
+                steps = 0;
+                _OC3IE = 1;
+                state = 4;
+            }
+            break;
+        case 2:
+            if(vTOF_L < vTOF_R){
+                _OC3IE = 1; //enabled
+                right_center();
+                steps = 0;
+                state = 3;
+            }
+            else{
+                _OC3IE = 1;
+                left_center();
+                steps = 0;
+                state = 3;
+            }
+            break;
+        case 3:
+            if(steps >= turn_steps){
+                _OC3IE = 0;
+                forward();
+                state = 1;
+            }
+            break;
+        case 4:
+            if(steps >= pivot_steps){
+                steps = 0;
+                _OC3IE = 0;
+                ss = line;
+            }
+            
+    }
+}
+
+
 void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
     
     steps ++;
@@ -605,6 +618,10 @@ int main(void) {
                 TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
                 TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
                 leftval = (double)ADC1BUF1/4095*3.3;
+                canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
+            case data_trans:
+                
+                
                 
                 
                 
