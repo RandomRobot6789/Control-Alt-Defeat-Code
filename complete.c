@@ -506,12 +506,14 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
                 left_pivot();
                 state = 2;
             }
+            break;
         case 2:
             if(steps >= second_steps){
                 _OC3IE = 0;
                 steps = 0;
                 state = 3
             }
+            break;
         case 3:
             double left = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
             double mid = (double)ADC1BUF13/4095*3.3;
@@ -524,6 +526,17 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
                 forward();
                 state = 4;                  
             }
+            break;
+        case 4:
+            if(steps >= third_steps){
+                _OC3IE = 0;
+                steps = 0;
+                stop();
+                state = 5;
+            }
+            break;
+        case 5:
+            //write code to make servo work
     }
 }
 
@@ -655,7 +668,7 @@ int main(void) {
                 leftval = (double)ADC1BUF1/4095*3.3;
                 canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
             case data_trans:
-                
+                data_trans(68, 140, 150);
                 
                 
                 
