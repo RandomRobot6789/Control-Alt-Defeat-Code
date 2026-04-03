@@ -440,7 +440,7 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
     }
 }
 
-void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, turn_steps, pivot_steps){
+void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, int turn_steps, int pivot_steps){
     switch(state){
         case 0:
             forward();
@@ -489,6 +489,26 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, tu
                 ss = line;
             }
             
+    }
+}
+
+void data_trans(int first_steps, int second_steps, int_third_steps){
+    switch(state){
+        case 0:
+            _OC3IE = 1;
+            forward();
+            steps = 0;
+            state = 1;
+            break;
+        case 1:
+            if(steps >= first_steps){
+                steps = 0;
+                left_pivot();
+                state = 2;
+            }
+        case 2:
+            line_following(lefval, midval, rightval);
+            if(
     }
 }
 
