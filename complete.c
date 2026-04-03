@@ -507,8 +507,23 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
                 state = 2;
             }
         case 2:
-            line_following(lefval, midval, rightval);
-            if(
+            if(steps >= second_steps){
+                _OC3IE = 0;
+                steps = 0;
+                state = 3
+            }
+        case 3:
+            double left = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
+            double mid = (double)ADC1BUF13/4095*3.3;
+            double right = (double)ADC1BUF14/4095*3.3;
+            uint16_t sensor = readRangeContinuousMillimeters(&(sensors[FRONT]));
+            line_following(left, mid, right);
+            if(sensor <= 300){
+                _OC3IE = 1;
+                steps = 0;
+                forward();
+                state = 4;                  
+            }
     }
 }
 
