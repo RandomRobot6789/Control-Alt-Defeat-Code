@@ -32,11 +32,11 @@ void config_pins_for_ad(void)
     //TRISBbits.TRISB1 = 1; // Configure pin 5 for input   
     //TRISBbits.TRISB2 = 1; // Configure pin 6 for input
     TRISAbits.TRISA2 = 1; // Configure pin 7 for input LEFT SENSOR
-    TRISAbits.TRISA3 = 1; // Configure pin 8 for input rIGHT SENSOR
+    TRISAbits.TRISA3 = 1; // Configure pin 8 for input RIGHT SENSOR
     //TRISBbits.TRISB4 = 1; // Configure pin 9 for input 
     //TRISBbits.TRISB12 = 1; // Configure pin 15 for input   
-    //TRISBbits.TRISB13 = 1; // Configure pin 16 for input
-    //TRISBbits.TRISB14 = 1; // Configure pin 17 for input
+    TRISBbits.TRISB13 = 1; // Configure pin 16 for input
+    TRISBbits.TRISB14 = 1; // Configure pin 17 for input
     //TRISBbits.TRISB15 = 1; // Configure pin 18 for input
 
     // Configure all the analog pins for analog (as opposed to digital)
@@ -49,8 +49,8 @@ void config_pins_for_ad(void)
     ANSAbits.ANSA3 = 1; // Configure pin 8 for analog RIGHT SENSOR
     //ANSBbits.ANSB4 = 1; // Configure pin 9 for analog 
     //ANSBbits.ANSB12 = 1; // Configure pin 15 for analog   
-    //ANSBbits.ANSB13 = 1; // Configure pin 16 for analog
-    //ANSBbits.ANSB14 = 1; // Configure pin 17 for analog
+    ANSBbits.ANSB13 = 1; // Configure pin 16 for analog
+    ANSBbits.ANSB14 = 1; // Configure pin 17 for analog
     //ANSBbits.ANSB15 = 1; // Configure pin 18 for analog
 }
 
@@ -90,8 +90,8 @@ void config_ad(void)
     _ADCS = 0b00000010;    // AD1CON3<7:0> -- TAD needs to be at least 750 ns. Thus, _ADCS = 0b00000010 will give us the fastest AD clock given a 4 MHz system clock.
 
     // AD1CSS registers
-    AD1CSSL = 0b0110000000000011; // choose A2D channels you'd like to scan here.
-    //this is doing pins AN 0,13,14,15 which is pins 7,8,9
+    AD1CSSL = 0b0111100000000011; // choose A2D channels you'd like to scan here.
+    //we have pins 15, 16, 2, 3, 7, 8 which are analog channels 12, 11, 0, 1, 13, 14
     _ADON = 1;    // AD1CON1<15> -- Turn on A/D
 }
 
@@ -441,6 +441,7 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
 }
 
 void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, int turn_steps, int pivot_steps){
+    static int state = 0;
     switch(state){
         case 0:
             forward();
@@ -493,6 +494,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, in
 }
 
 void data_trans(int first_steps, int second_steps, int_third_steps){
+    static int state = 0;
     switch(state){
         case 0:
             _OC3IE = 1;
@@ -533,13 +535,75 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
                 steps = 0;
                 stop();
                 state = 5;
+                
+                //enable OC1 PWM interrupts
+                IEC0bits.OC1IE = 0b1;
             }
             break;
         case 5:
-            //write code to make servo work
+            //set up PWM then continually:
+            //increment PWM period
+            //Measure voltage
+
+            //The algorithm works like this:
+            //we have a high and a low threshold
+            //as we increase the angle, we measure the first time we cross above the high threshold
+            //and when we reach the low threshold again, we look at the last time we crossed below the high threshold
+            //find the midpoint of these two angles
+            //and aim at that
+
+            //this algorithm lives mostly in the interrupt handler TBH
+
+            if (is_data_trans_measurement_done) {
+                IEC0bits.OC1IE = 0b0;
+                state = 6;
+                OC1R = (data_trans_low_angle + data_trans_high_angle) << 1 //divided by two
+                //gotta wait for the motor to get in position before turning on the laser
+                //wait 0.1 seconds
+                T5CON = 0x8030;
+                PER5 = 0xFFFF; 
+                TMR1 = 0;
+            }
+            break;
+        case 6:
+            for (int i=0; i<5; i++) { //5 times:
+                while (TMR1 < 40000) {} //wait 20 ms (blocking code, I know...)
+                TMR1 = 0;
+            }
+            LATBbits.RB17 = 0b1; //turn on laser
+            state = 7; 
+            break;
+        case 7:
+            break;
     }
 }
 
+uint16_t data_trans_low_angle = 0;
+uint16_t data_trans_high_angle = 0;
+bool is_data_trans_measurement_done = false;
+
+//analog to digital is 12 bit where all 1s is 3.3V
+#define DATA_TRANS_LOW_THRESHOLD 0x800
+#define DATA_TRANS_HIGH_TRESHOLD 0x600
+
+void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
+    
+    uint16_t measurement = ADC1BUF11; //read from that photodiode
+    if (measurement > DATA_TRANS_HIGH_TRESHOLD) {
+        if (data_trans_low_angle == 0) {
+            data_trans_low_angle = OC1R;
+        }
+        data_trans_high_angle = OC1R;
+    }
+    else {
+        if ((measurement < DATA_TRANS_LOW_THRESHOLD) && (data_trans_low_angle != 0)) {
+            is_data_trans_measurement_done = true;
+        }
+    }
+
+    OC1R += 30; //takes 1.5 seconds to move 90 degrees
+    _OC1IF = 0;
+}
 
 void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
     
@@ -571,6 +635,25 @@ int main(void) {
     OC2CON1bits.OCTSEL = 0b111; //
     OC2CON2bits.SYNCSEL = 0b11111; //
     OC2CON2bits.OCTRIG = 0; //
+
+    #define SERVO_PWM_PERIOD 40000 //calculated from 2MHz clock frequency for 50 Hz signal (from datasheet)
+    #define SERVO_PWM_MIN_COUNT 1000 //0.5 ms (from datasheet)
+    #define SERVO_PWM_MAX_COUNT 5000 //2.5 ms (from datasheet) 
+    //but we only go halfway there
+
+    //set up servo PWM:
+    TRISAbits.RA6 = 0;
+    OC1CON1 = 0; // sets all settings to 0 for 1 and 2 ALL for pin 14/RA6
+    OC1CON2 = 0;
+    OC1CON1bits.OCTSEL = 0b111; // system clock chosen
+    OC1CON2bits.SYNCSEL = 0b11111; // output compare module
+    OC1CON2bits.OCTRIG = 0;
+    OC1CON1bits.OCM = 0b110; //edge aligned pwm; enables the PWM output
+    OC1RS = SERVO_PWM_PERIOD;
+    OC1R = SERVO_PWM_MIN_COUNT; 
+    //this keeps the servo at 0 degrees for most of the course
+    TRISBbits.RB14 = 0b0; //set up laser pin
+    LATBbits.RB14 = 0b0;
     
     //Stepper 1/left pins
     _TRISB1 = 0; //pwm pin 14
