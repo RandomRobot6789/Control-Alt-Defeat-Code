@@ -160,7 +160,27 @@ enum which_ToF {
     SPARE
 };
 
-
+void init_tofs() {
+    write_expander(EXPANDER_ADDR, 0x00);
+    
+    struct sensor_instance sensors[NUM_OF_TOFS];
+    struct sensor_instance default_address_dummy = construct_sensor_instance();
+    for (int i=0; i<NUM_OF_TOFS; i++) {
+        LATC = LATC && (1 << i);
+        for(int k=0; k<100; k++) {
+            write_expander(EXPANDER_ADDR, LATC);
+        }
+        sensors[i] = construct_sensor_instance();
+        uint8_t new_addr = 0x40 + i;
+        setAddress(&(sensors[i]), new_addr);
+        //Make sure that worked:
+        for(int k=0; k<100; k++) {
+            writeReg(&(default_address_dummy), I2C_SLAVE_DEVICE_ADDRESS, new_addr & 0x7F);
+        }
+        init(&(sensors[i]), true);
+        startContinuous(&(sensors[i]), 0);
+    }
+}
 
 void adjust_differential(uint16_t left) {
     static uint16_t old_left = 0;
@@ -687,28 +707,10 @@ int main(void) {
     
     init_i2c();
     
-    //get expanders in a known state
-    write_expander(EXPANDER_ADDR, 0x00);
+    //get expander in a known state
     write_expander(LED_ARR_ADDR, 0x00); 
     
-    struct sensor_instance sensors[NUM_OF_TOFS];
-    struct sensor_instance default_address_dummy = construct_sensor_instance();
-    for (int i=0; i<NUM_OF_TOFS; i++) {
-//        LATC = LATC && (1 << i); 
-        LATC = LATC | (1 << (2*i)); //temporary hack, remove with new pcb
-        for(int k=0; k<100; k++) {
-            write_expander(EXPANDER_ADDR, LATC);
-        }
-        sensors[i] = construct_sensor_instance();
-        uint8_t new_addr = 0x40 + i;
-        setAddress(&(sensors[i]), new_addr);
-        //Make sure that worked:
-        for(int k=0; k<100; k++) {
-            writeReg(&(default_address_dummy), I2C_SLAVE_DEVICE_ADDRESS, new_addr & 0x7F);
-        }
-        init(&(sensors[i]), true);
-        startContinuous(&(sensors[i]), 0);
-    }
+    init_tofs();
     
     while(1){
         switch(ss){
