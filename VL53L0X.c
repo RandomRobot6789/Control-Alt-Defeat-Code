@@ -48,7 +48,7 @@ uint16_t millis() {
 
 //pseudo-constructor
 struct sensor_instance construct_sensor_instance() {
-    struct sensor_instance to_return = {.address = ADDRESS_DEFAULT, .io_timeout = 0, .did_timeout = false, .stop_variable = 0, .measurement_timing_budget_us = 0};
+    struct sensor_instance to_return = {.address = ADDRESS_DEFAULT, .io_timeout = 0, .did_timeout = false, .stop_variable = 0, .measurement_timing_budget_us = 0, .last_measurement = 0x2FFF};
     return to_return;
 }
 
@@ -849,13 +849,9 @@ void stopContinuous(struct sensor_instance* sensor)
 uint16_t readRangeContinuousMillimeters(struct sensor_instance* sensor)
 {
   startTimeout();
-  while ((readReg(sensor, RESULT_INTERRUPT_STATUS) & 0x07) == 0)
+  if ((readReg(sensor, RESULT_INTERRUPT_STATUS) & 0x07) == 0)
   {
-    if (checkTimeoutExpired(sensor))
-    {
-      sensor->did_timeout = true;
-      return 65535;
-    }
+    return sensor->last_measurement;
   }
   #ifdef OSC_TOF_READ
   OSC_ON;
@@ -868,6 +864,7 @@ uint16_t readRangeContinuousMillimeters(struct sensor_instance* sensor)
   #ifdef OSC_TOF_READ
   OSC_OFF;
   #endif
+  sensor->last_measurement = range;
   return range;
 }
 
