@@ -124,9 +124,13 @@ double max_freq = 351;//This is the fastest we want the steppers to move
 double min_freq = 85;//slowest
 double std_freq = 218;
 
-
-enum drivemode {forward, left, right, decider};
+int ball = 0;
 int steps = 0;
+int steps_needed;
+
+enum superstate {start_s, line_s, collection_s, canyon_s, samp_return_s, data_trans_s};
+
+enum superstate ss = start_s;
 
 uint16_t threshold = 165;
 
@@ -143,6 +147,7 @@ static uint8_t LATD = 0x00; //LED bank
 uint16_t TOF_l;
 uint16_t TOF_m;
 uint16_t TOF_r;
+uint16_t TOF_samp;
 
 
 
@@ -160,10 +165,12 @@ enum which_ToF {
     SPARE
 };
 
+
+struct sensor_instance sensors[NUM_OF_TOFS];
+
 void init_tofs() {
     write_expander(EXPANDER_ADDR, 0x00);
     
-    struct sensor_instance sensors[NUM_OF_TOFS];
     struct sensor_instance default_address_dummy = construct_sensor_instance();
     for (int i=0; i<NUM_OF_TOFS; i++) {
         LATC = LATC && (1 << i);
@@ -251,7 +258,7 @@ void line_follower(double leftval, double midval, double rightval){
             _LATB7 = 1;
         }
 }
-void straight(){
+void forward(){
     OC3RS = 12049;
     OC2RS = 12049;
     OC2R = 6000;
@@ -310,7 +317,7 @@ void stop(){
 
 void findline1(){
     static int state = 1;
-    swtich(state){
+    switch(state){
         case 1:
             forward();
             if(leftval < 2.8 && rightval <2.8){
@@ -321,10 +328,10 @@ void findline1(){
         case 2:
             left_pivot();
             if(steps >= steps_needed){
-                OC3IE = 0;
+                _OC3IE = 0;
                 steps = 0;
                 state = 1;
-                ss = line;
+                ss = line_s;
             }
             break;
             
@@ -375,7 +382,7 @@ void samp_collect(int turn_steps, int move_steps){
             if(steps >= turn_steps){
                 _OC3IE = 0;
                 steps = 0;
-                ss = line;
+                ss = line_s;
             }
             break;   
     }
@@ -454,7 +461,7 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
             if(steps >= turn_steps){
                 _OC3IE = 0;
                 steps = 0;
-                ss = line;
+                ss = line_s;
             }
             break;   
     }
@@ -475,7 +482,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, in
                     right_pivot();
                 }
                 else{
-                    left_pivot()
+                    left_pivot();
                 }
                 steps = 0;
                 _OC3IE = 1;
@@ -507,13 +514,17 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, in
             if(steps >= pivot_steps){
                 steps = 0;
                 _OC3IE = 0;
-                ss = line;
+                ss = line_s;
             }
             
     }
 }
 
-void data_trans(int first_steps, int second_steps, int_third_steps){
+uint16_t data_trans_low_angle = 0;
+uint16_t data_trans_high_angle = 0;
+bool is_data_trans_measurement_done = false;
+
+void data_trans(int first_steps, int second_steps, int third_steps){
     static int state = 0;
     switch(state){
         case 0:
@@ -533,15 +544,16 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
             if(steps >= second_steps){
                 _OC3IE = 0;
                 steps = 0;
-                state = 3
+                state = 3;
             }
             break;
         case 3:
-            double left = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
-            double mid = (double)ADC1BUF13/4095*3.3;
-            double right = (double)ADC1BUF14/4095*3.3;
+            Nop();
+            double left_qrd = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
+            double mid_qrd = (double)ADC1BUF13/4095*3.3;
+            double right_qrd = (double)ADC1BUF14/4095*3.3;
             uint16_t sensor = readRangeContinuousMillimeters(&(sensors[FRONT]));
-            line_following(left, mid, right);
+            line_follower(left_qrd, mid_qrd, right_qrd);
             if(sensor <= 300){
                 _OC3IE = 1;
                 steps = 0;
@@ -577,20 +589,20 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
             if (is_data_trans_measurement_done) {
                 IEC0bits.OC1IE = 0b0;
                 state = 6;
-                OC1R = (data_trans_low_angle + data_trans_high_angle) << 1 //divided by two
+                OC1R = (data_trans_low_angle + data_trans_high_angle) << 1; //divided by two
                 //gotta wait for the motor to get in position before turning on the laser
                 //wait 0.1 seconds
                 T5CON = 0x8030;
-                PER5 = 0xFFFF; 
-                TMR1 = 0;
+                PR5 = 0xFFFF; 
+                TMR5 = 0;
             }
             break;
         case 6:
             for (int i=0; i<5; i++) { //5 times:
-                while (TMR1 < 40000) {} //wait 20 ms (blocking code, I know...)
-                TMR1 = 0;
+                while (TMR5 < 40000) {} //wait 20 ms (blocking code, I know...)
+                TMR5 = 0;
             }
-            LATBbits.RB17 = 0b1; //turn on laser
+            LATBbits.LATB14 = 0b1; //turn on laser
             state = 7; 
             break;
         case 7:
@@ -598,9 +610,6 @@ void data_trans(int first_steps, int second_steps, int_third_steps){
     }
 }
 
-uint16_t data_trans_low_angle = 0;
-uint16_t data_trans_high_angle = 0;
-bool is_data_trans_measurement_done = false;
 
 //analog to digital is 12 bit where all 1s is 3.3V
 #define DATA_TRANS_LOW_THRESHOLD 0x800
@@ -634,9 +643,7 @@ void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
 
 struct sensor_instance sensors[NUM_OF_TOFS];
 
-enum superstate {start, line, collection, canyon, samp_return, data_trans} 
 
-enum superstate ss = start;
 
 int main(void) {
 
@@ -662,7 +669,7 @@ int main(void) {
     //but we only go halfway there
 
     //set up servo PWM:
-    TRISAbits.RA6 = 0;
+    TRISAbits.TRISA6 = 0;
     OC1CON1 = 0; // sets all settings to 0 for 1 and 2 ALL for pin 14/RA6
     OC1CON2 = 0;
     OC1CON1bits.OCTSEL = 0b111; // system clock chosen
@@ -672,8 +679,8 @@ int main(void) {
     OC1RS = SERVO_PWM_PERIOD;
     OC1R = SERVO_PWM_MIN_COUNT; 
     //this keeps the servo at 0 degrees for most of the course
-    TRISBbits.RB14 = 0b0; //set up laser pin
-    LATBbits.RB14 = 0b0;
+    TRISBbits.TRISB14 = 0b0; //set up laser pin
+    LATBbits.LATB14 = 0b0;
     
     //Stepper 1/left pins
     _TRISB1 = 0; //pwm pin 14
@@ -714,10 +721,10 @@ int main(void) {
     
     while(1){
         switch(ss){
-            case start:
+            case start_s:
                 findline1();
                 break;
-            case line:
+            case line_s:
                 TOF_samp = readRangeContinuousMillimeters(&(sensors[SAMPLE_RETURN]));
                 TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
                 TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
@@ -725,34 +732,35 @@ int main(void) {
                 leftval = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
                 midval = (double)ADC1BUF13/4095*3.3;
                 rightval = (double)ADC1BUF14/4095*3.3;
-                linefollower(leftval, midval, rightval);
+                line_follower(leftval, midval, rightval);
                 if(_RB12 == 1 && ball == 0){
-                    ss = collection;
+                    ss = collection_s;
                 }
-                if((ball == 1 && TOF_SAMP < threshold) && (TOF_R > threshold)){
-                    ss = samp_return;
+                if((ball == 1 && TOF_samp < threshold) && (TOF_r > threshold)){
+                    ss = samp_return_s;
                 }
                 if(TOF_l < threshold && TOF_r < threshold){
-                    ss = canyon;
+                    ss = canyon_s;
                 }
                 if(leftval < 2.6 && midval < 2.9){
-                    ss = data_trans;
+                    ss = data_trans_s;
                 }
                 break;
-            case collection:
+            case collection_s:
                 samp_collect(200,400);
                 break;
-            case samp_return:
-                sampval = (double)ADC1BUF0/4095*3.3;
+            case samp_return_s:
+                Nop();
+                double sampval = (double)ADC1BUF0/4095*3.3;
                 samp_return(140, 250, sampval);
                 break;
-            case canyon:
+            case canyon_s:
                 TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
                 TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
                 TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
                 leftval = (double)ADC1BUF1/4095*3.3;
                 canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
-            case data_trans:
+            case data_trans_s:
                 data_trans(68, 140, 150);
                 
                 
