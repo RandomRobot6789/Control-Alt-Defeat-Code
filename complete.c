@@ -77,7 +77,7 @@ void config_ad(void)
                   // location corresponding to channel
     _CSCNA = 1;   // AD1CON2<10> -- Scans inputs specified
                   // in AD1CSSx registers
-    _SMPI = 2;    // AD1CON2<6:2> -- Every 9th conversion sent (number of channels sampled -1)
+    _SMPI = 3;    // AD1CON2<6:2> -- Every 9th conversion sent (number of channels sampled -1)
                   // to buffer (if sampling 10 channels)
     _ALTS = 0;    // AD1CON2<0> -- Sample MUXA only
 
@@ -90,7 +90,7 @@ void config_ad(void)
     _ADCS = 0b00000010;    // AD1CON3<7:0> -- TAD needs to be at least 750 ns. Thus, _ADCS = 0b00000010 will give us the fastest AD clock given a 4 MHz system clock.
 
     // AD1CSS registers
-    AD1CSSL = 0b0110000000000010; // choose A2D channels you'd like to scan here.
+    AD1CSSL = 0b0110100000000010; // choose A2D channels you'd like to scan here.
     //we have pins 15, 16, 2, 3, 7, 8 which are analog channels 12, 11, 0, 1, 13, 14
     _ADON = 1;    // AD1CON1<15> -- Turn on A/D
 }
@@ -130,7 +130,7 @@ int steps_needed;
 
 enum superstate {start_s, line_s, collection_s, canyon_s, samp_return_s, data_trans_s};
 
-enum superstate ss = start_s;
+enum superstate ss = line_s;
 
 uint16_t threshold = 165;
 
@@ -755,7 +755,7 @@ int main(void) {
                 midval = (double)ADC1BUF13/4095*3.3;
                 rightval = (double)ADC1BUF14/4095*3.3;
                 line_follower(leftval, midval, rightval);
-                if(_RB12 == 0 && ball == 0){
+                /*if(_RB12 == 0 && ball == 0){
                     ss = collection_s;
                 }
                 if((ball == 1 && TOF_samp < threshold) && (TOF_r > threshold)){
@@ -763,7 +763,7 @@ int main(void) {
                 }
                 if(TOF_l < threshold && TOF_r < threshold){
                     ss = canyon_s;
-                }
+                }*/
                 if(leftval < 2.6 && midval < 2.9){
                     ss = data_trans_s;
                 }
