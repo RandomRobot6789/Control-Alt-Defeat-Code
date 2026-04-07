@@ -77,7 +77,7 @@ void config_ad(void)
                   // location corresponding to channel
     _CSCNA = 1;   // AD1CON2<10> -- Scans inputs specified
                   // in AD1CSSx registers
-    _SMPI = 3;    // AD1CON2<6:2> -- Every 9th conversion sent (number of channels sampled -1)
+    _SMPI = 2;    // AD1CON2<6:2> -- Every 9th conversion sent (number of channels sampled -1)
                   // to buffer (if sampling 10 channels)
     _ALTS = 0;    // AD1CON2<0> -- Sample MUXA only
 
@@ -90,7 +90,7 @@ void config_ad(void)
     _ADCS = 0b00000010;    // AD1CON3<7:0> -- TAD needs to be at least 750 ns. Thus, _ADCS = 0b00000010 will give us the fastest AD clock given a 4 MHz system clock.
 
     // AD1CSS registers
-    AD1CSSL = 0b0111100000000011; // choose A2D channels you'd like to scan here.
+    AD1CSSL = 0b0110000000000010; // choose A2D channels you'd like to scan here.
     //we have pins 15, 16, 2, 3, 7, 8 which are analog channels 12, 11, 0, 1, 13, 14
     _ADON = 1;    // AD1CON1<15> -- Turn on A/D
 }
@@ -212,7 +212,6 @@ void adjust_differential(uint16_t left) {
 
 
 void line_follower(double leftval, double midval, double rightval){
-        _LATB7 = 0;
 
         
         double error = midval - goal;
@@ -228,11 +227,9 @@ void line_follower(double leftval, double midval, double rightval){
         freq_left = std_freq * (1 - pwm_output);
         if(freq_right <= min_freq){ //set max and min speeds for motors
             OC2RS = fcy / min_freq;
-            _LATB7 = 1;
         }
         else if(freq_right >= max_freq){
             OC2RS = fcy / max_freq;
-            _LATB7 = 1;
         }
         else{
             OC2RS = fcy / freq_right;
@@ -240,11 +237,9 @@ void line_follower(double leftval, double midval, double rightval){
 
         if(freq_left <= min_freq){
             OC3RS = fcy / min_freq;
-            _LATB7 = 1;
         }
         else if(freq_left >= max_freq){
             OC3RS = fcy / max_freq;
-            _LATB7 = 1;
         }
         else{
             OC3RS = fcy / freq_left;
@@ -258,14 +253,12 @@ void line_follower(double leftval, double midval, double rightval){
             OC2RS = fcy/max_freq;
             OC3R = 0;
             OC2R = .5*OC2RS;
-            _LATB7 = 1;
         }
         if(rightval < goal_r){
             OC3RS= fcy/max_freq;
             OC2RS = fcy/min_freq;
             OC3R = .5*OC3RS;
             OC2R = 0;
-            _LATB7 = 1;
         }
 }
 void forward(){
@@ -316,7 +309,7 @@ void reverse(){
     _LATB4 = 1;
     _LATA4 = 1;
 }
-void stop(){
+void stop_robot(){
     OC3RS = 12049;
     OC2RS = 12049;
     OC2R = 0;
@@ -330,8 +323,11 @@ void findline1(){
     switch(state){
         case 1:
             forward();
-            if(leftval < 2.8 && rightval <2.8){
+            double left_qrd = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
+            double right_qrd = (double)ADC1BUF14/4095*3.3;
+            if(left_qrd < 2.5 && right_qrd <2.5){
                 steps_needed = 270;
+                _OC3IE = 1;
                 state = 2;
             } 
             break;
@@ -348,13 +344,13 @@ void findline1(){
     write_substate(state);
 }
 
-void samp_collect(int turn_steps, int move_steps){
+void samp_collect(int turn_steps, int move_steps, int turn_steps2){
     static int state = 1;
     switch(state){
         case 1:
             _OC3IE = 1;
             steps = 0;
-            right_center();
+            right_pivot();
             state = 2;
             break;
         case 2:
@@ -367,14 +363,15 @@ void samp_collect(int turn_steps, int move_steps){
         case 3:
             if(steps >= move_steps){
                 steps = 0;
-                stop();
+                stop_robot();
                 state = 4;
                 i = 0;
             }
             break;
         case 4:
             i++;
-            if(i >= 25){
+            if(i >= 1000){
+                ball = 1;
                 steps = 0;
                 reverse();
                 state = 5;
@@ -389,10 +386,12 @@ void samp_collect(int turn_steps, int move_steps){
             }
             break;
         case 6:
-            if(steps >= turn_steps){
+            if(steps >= turn_steps2){
                 _OC3IE = 0;
                 steps = 0;
                 ss = line_s;
+                _LATB4 = 0;
+                _LATA4 = 0;
             }
             break;   
     }
@@ -439,7 +438,7 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
         case 3:
             if(steps >= move_steps){
                 steps = 0;
-                stop();
+                stop_robot();
                 if(white ==1){
                     Solenoid_On(5);
                 }
@@ -472,6 +471,7 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
             if(steps >= turn_steps){
                 _OC3IE = 0;
                 steps = 0;
+                ball = 2;
                 ss = line_s;
             }
             break;   
@@ -550,13 +550,15 @@ void data_trans(int first_steps, int second_steps, int third_steps){
         case 1:
             if(steps >= first_steps){
                 steps = 0;
-                left_pivot();
+                left_center();
                 state = 2;
             }
             break;
         case 2:
             if(steps >= second_steps){
                 _OC3IE = 0;
+                _LATB4 = 0;
+                _LATA4 = 0;
                 steps = 0;
                 state = 3;
             }
@@ -579,7 +581,7 @@ void data_trans(int first_steps, int second_steps, int third_steps){
             if(steps >= third_steps){
                 _OC3IE = 0;
                 steps = 0;
-                stop();
+                stop_robot();
                 state = 5;
                 
                 //enable OC1 PWM interrupts
@@ -709,8 +711,7 @@ int main(void) {
     _TRISA4 = 0;// direction pin
     _LATA4 = 0;
     
-    //switch pin - pull down resistor
-    //_TRISB7 = 1;//input
+
             
     //set up pwm 
     OC3CON1bits.OCM = 0b110; //edge aligned pwm
@@ -727,15 +728,20 @@ int main(void) {
     _OC3IE = 0; // disable the OC3 interrupt for now
     _OC3IF = 0; // Clear the interrupt flag
     
+    _OC1IP = 5; // Select the interrupt priority
+    _OC1IE = 0; // disable the OC3 interrupt for now
+    _OC1IF = 0; // Clear the interrupt flag
+    
     init_i2c();
     
     //get expander in a known state
-    LATD = 0x00
+    LATD = 0x00;
     write_expander(LED_ARR_ADDR, LATD); 
     
     init_tofs();
     
     while(1){
+
         switch(ss){
             case start_s:
                 findline1();
@@ -749,7 +755,7 @@ int main(void) {
                 midval = (double)ADC1BUF13/4095*3.3;
                 rightval = (double)ADC1BUF14/4095*3.3;
                 line_follower(leftval, midval, rightval);
-                if(_RB12 == 1 && ball == 0){
+                if(_RB12 == 0 && ball == 0){
                     ss = collection_s;
                 }
                 if((ball == 1 && TOF_samp < threshold) && (TOF_r > threshold)){
@@ -763,12 +769,12 @@ int main(void) {
                 }
                 break;
             case collection_s:
-                samp_collect(200,400);
+                samp_collect(280,220,140);
                 break;
             case samp_return_s:
                 Nop();
                 double sampval = (double)ADC1BUF0/4095*3.3;
-                samp_return(140, 250, sampval);
+                samp_return(200, 250, sampval);
                 break;
             case canyon_s:
                 TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
@@ -778,7 +784,7 @@ int main(void) {
                 canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
                 break;
             case data_trans_s:
-                data_trans(68, 140, 150);
+                data_trans(55, 140, 50);
                 break;
         }
         write_state(ss);
