@@ -157,6 +157,16 @@ void write_expander(uint8_t address, uint8_t byte) {
     stop();
 }
 
+void write_state(uint8_t data) { //only lower 3 bits matter
+    LATD = (LATD & 0b11111000) | (data & 0b00000111);
+    write_expander(LED_ARR_ADDR, LATD);
+}
+
+void write_substate(uint8_t data) { //only lower 3 bits matter
+    LATD = (LATD & 0b11000111) | ((data << 3) & 0b00111000);
+    write_expander(LED_ARR_ADDR, LATD);
+}
+
 enum which_ToF {
     FRONT,
     RIGHT,
@@ -334,8 +344,8 @@ void findline1(){
                 ss = line_s;
             }
             break;
-            
     }
+    write_substate(state);
 }
 
 void samp_collect(int turn_steps, int move_steps){
@@ -386,6 +396,7 @@ void samp_collect(int turn_steps, int move_steps){
             }
             break;   
     }
+    write_substate(state);
 }
 
 void Solenoid_On(int pin){
@@ -465,6 +476,7 @@ void samp_return(int turn_steps, int move_steps, double qrd_val){
             }
             break;   
     }
+    write_substate(state);
 }
 
 void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, int turn_steps, int pivot_steps){
@@ -473,6 +485,7 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, in
         case 0:
             forward();
             state = 1;
+            break;
         case 1://left and right steppers same direction, same speed
             if(vTOF_M <= threshold){
                 state = 2;
@@ -516,8 +529,9 @@ void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, in
                 _OC3IE = 0;
                 ss = line_s;
             }
-            
+            break;    
     }
+    write_substate(state);
 }
 
 uint16_t data_trans_low_angle = 0;
@@ -608,6 +622,7 @@ void data_trans(int first_steps, int second_steps, int third_steps){
         case 7:
             break;
     }
+    write_substate(state);
 }
 
 
@@ -715,7 +730,8 @@ int main(void) {
     init_i2c();
     
     //get expander in a known state
-    write_expander(LED_ARR_ADDR, 0x00); 
+    LATD = 0x00
+    write_expander(LED_ARR_ADDR, LATD); 
     
     init_tofs();
     
@@ -760,14 +776,12 @@ int main(void) {
                 TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
                 leftval = (double)ADC1BUF1/4095*3.3;
                 canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
+                break;
             case data_trans_s:
                 data_trans(68, 140, 150);
-                
-                
-                
-                
-
+                break;
         }
+        write_state(ss);
     }
     return 0;
 }
