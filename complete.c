@@ -34,8 +34,8 @@ void config_pins_for_ad(void)
     TRISAbits.TRISA2 = 1; // Configure pin 7 for input LEFT SENSOR
     TRISAbits.TRISA3 = 1; // Configure pin 8 for input RIGHT SENSOR
     //TRISBbits.TRISB4 = 1; // Configure pin 9 for input 
-    //TRISBbits.TRISB12 = 1; // Configure pin 15 for input   
-    TRISBbits.TRISB13 = 1; // Configure pin 16 for input
+    TRISBbits.TRISB12 = 1; // Configure pin 15 for input   
+    //TRISBbits.TRISB13 = 1; // Configure pin 16 for input
     TRISBbits.TRISB14 = 1; // Configure pin 17 for input
     //TRISBbits.TRISB15 = 1; // Configure pin 18 for input
 
@@ -49,7 +49,7 @@ void config_pins_for_ad(void)
     ANSAbits.ANSA3 = 1; // Configure pin 8 for analog RIGHT SENSOR
     //ANSBbits.ANSB4 = 1; // Configure pin 9 for analog 
     //ANSBbits.ANSB12 = 1; // Configure pin 15 for analog   
-    ANSBbits.ANSB13 = 1; // Configure pin 16 for analog
+    //ANSBbits.ANSB13 = 1; // Configure pin 16 for analog
     ANSBbits.ANSB14 = 1; // Configure pin 17 for analog
     //ANSBbits.ANSB15 = 1; // Configure pin 18 for analog
 }
@@ -90,7 +90,7 @@ void config_ad(void)
     _ADCS = 0b00000010;    // AD1CON3<7:0> -- TAD needs to be at least 750 ns. Thus, _ADCS = 0b00000010 will give us the fastest AD clock given a 4 MHz system clock.
 
     // AD1CSS registers
-    AD1CSSL = 0b0110100000000010; // choose A2D channels you'd like to scan here.
+    AD1CSSL = 0b0110010000000011; // choose A2D channels you'd like to scan here.
     //we have pins 15, 16, 2, 3, 7, 8 which are analog channels 12, 11, 0, 1, 13, 14
     _ADON = 1;    // AD1CON1<15> -- Turn on A/D
 }
@@ -158,12 +158,12 @@ void write_expander(uint8_t address, uint8_t byte) {
 }
 
 void write_state(uint8_t data) { //only lower 3 bits matter
-    LATD = (LATD & 0b11111000) | (data & 0b00000111);
+    LATD = (LATD & 0b11111000) | ((~data) & 0b00000111);
     write_expander(LED_ARR_ADDR, LATD);
 }
 
 void write_substate(uint8_t data) { //only lower 3 bits matter
-    LATD = (LATD & 0b11000111) | ((data << 3) & 0b00111000);
+    LATD = (LATD & 0b11000111) | (((~data) << 3) & 0b00111000);
     write_expander(LED_ARR_ADDR, LATD);
 }
 
@@ -538,6 +538,12 @@ uint16_t data_trans_low_angle = 0;
 uint16_t data_trans_high_angle = 0;
 bool is_data_trans_measurement_done = false;
 
+#define SERVO_PWM_PERIOD 40000 //calculated from 2MHz clock frequency for 50 Hz signal (from datasheet)
+#define SERVO_PWM_MIN_COUNT 1000 //0.5 ms (from datasheet)
+#define SERVO_PWM_MAX_COUNT 5000 //2.5 ms (from datasheet) 
+#define SERVO_PWM_MAX_COUNT_WE_ACTUALLY_GO_TO 3500 //2.5 ms (from datasheet) 
+//but we only go halfway there
+
 void data_trans(int first_steps, int second_steps, int third_steps){
     static int state = 0;
     switch(state){
@@ -570,7 +576,7 @@ void data_trans(int first_steps, int second_steps, int third_steps){
             double right_qrd = (double)ADC1BUF14/4095*3.3;
             uint16_t sensor = readRangeContinuousMillimeters(&(sensors[FRONT]));
             line_follower(left_qrd, mid_qrd, right_qrd);
-            if(sensor <= 300){
+            if(sensor <= 280){
                 _OC3IE = 1;
                 steps = 0;
                 forward();
@@ -605,20 +611,17 @@ void data_trans(int first_steps, int second_steps, int third_steps){
             if (is_data_trans_measurement_done) {
                 IEC0bits.OC1IE = 0b0;
                 state = 6;
-                OC1R = (data_trans_low_angle + data_trans_high_angle) << 1; //divided by two
+                OC1R = (data_trans_low_angle + data_trans_high_angle) / 2; //divided by two
                 //gotta wait for the motor to get in position before turning on the laser
-                //wait 0.1 seconds
+                //wait 0.15 seconds
                 T5CON = 0x8030;
                 PR5 = 0xFFFF; 
                 TMR5 = 0;
             }
             break;
         case 6:
-            for (int i=0; i<5; i++) { //5 times:
-                while (TMR5 < 40000) {} //wait 20 ms (blocking code, I know...)
-                TMR5 = 0;
-            }
-            LATBbits.LATB14 = 0b1; //turn on laser
+            while (TMR5 < 1200) {} //wait 150 ms (blocking code, I know...)
+            LATBbits.LATB13 = 0b1; //turn on laser
             state = 7; 
             break;
         case 7:
@@ -629,12 +632,12 @@ void data_trans(int first_steps, int second_steps, int third_steps){
 
 
 //analog to digital is 12 bit where all 1s is 3.3V
-#define DATA_TRANS_LOW_THRESHOLD 0x800
-#define DATA_TRANS_HIGH_TRESHOLD 0x600
+#define DATA_TRANS_LOW_THRESHOLD 0x600
+#define DATA_TRANS_HIGH_TRESHOLD 0x800
 
 void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
     
-    uint16_t measurement = ADC1BUF11; //read from that photodiode
+    uint16_t measurement = ADC1BUF10; //read from that photodiode
     if (measurement > DATA_TRANS_HIGH_TRESHOLD) {
         if (data_trans_low_angle == 0) {
             data_trans_low_angle = OC1R;
@@ -648,6 +651,14 @@ void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
     }
 
     OC1R += 30; //takes 1.5 seconds to move 90 degrees
+    if (OC1R > (SERVO_PWM_MAX_COUNT_WE_ACTUALLY_GO_TO)) { //find failed, start over
+        data_trans_low_angle = 0;
+        OC1R = SERVO_PWM_MIN_COUNT; 
+        T5CON = 0x8030;
+        PR5 = 0xFFFF; 
+        TMR5 = 0;
+        while (TMR5 < 1200) {}
+    }
     _OC1IF = 0;
 }
 
@@ -680,10 +691,7 @@ int main(void) {
     OC2CON2bits.SYNCSEL = 0b11111; //
     OC2CON2bits.OCTRIG = 0; //
 
-    #define SERVO_PWM_PERIOD 40000 //calculated from 2MHz clock frequency for 50 Hz signal (from datasheet)
-    #define SERVO_PWM_MIN_COUNT 1000 //0.5 ms (from datasheet)
-    #define SERVO_PWM_MAX_COUNT 5000 //2.5 ms (from datasheet) 
-    //but we only go halfway there
+
 
     //set up servo PWM:
     TRISAbits.TRISA6 = 0;
@@ -696,8 +704,8 @@ int main(void) {
     OC1RS = SERVO_PWM_PERIOD;
     OC1R = SERVO_PWM_MIN_COUNT; 
     //this keeps the servo at 0 degrees for most of the course
-    TRISBbits.TRISB14 = 0b0; //set up laser pin
-    LATBbits.LATB14 = 0b0;
+    TRISBbits.TRISB13 = 0b0; //set up laser pin
+    LATBbits.LATB13 = 0b0;
     
     //Stepper 1/left pins
     _TRISB1 = 0; //pwm pin 14
@@ -784,7 +792,7 @@ int main(void) {
                 canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
                 break;
             case data_trans_s:
-                data_trans(55, 140, 50);
+                data_trans(55, 140, 120);
                 break;
         }
         write_state(ss);
