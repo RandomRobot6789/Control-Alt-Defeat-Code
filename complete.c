@@ -1,801 +1,1074 @@
-/*
- * File:   newmainXC16.c
- * Author: williammulberry
- *
- * Created on March 19, 2026, 12:44 PM
- */
+// Most of the functionality of this library is based on the VL53L0X API
+// provided by ST (STSW-IMG005), and some of the explanatory comments are quoted
+// or paraphrased from the API source code, API user manual (UM2039), and the
+// VL53L0X datasheet.
 
-
-#include "xc.h"
-#include "settings.h"
 #include "VL53L0X.h"
 #include "i2c_driver.h"
-#pragma config ICS = PGx3
-
-#pragma config OSCIOFNC = OFF
-#pragma config SOSCSRC = DIG
+#include "settings.h"
 
 
 
-void config_pins_for_ad(void)
-{
-    // Put all relevant registers into a known state
-    TRISA = 0xFFFF;
-    TRISB = 0xFFFF;
-    ANSA = 0;
-    ANSB = 0;
-    //REMOVE ALL PINS EXCEPT FOR THE ONES FOR THE QRD
-    // Configure the tri state adapter for input for all the analog pins
-    TRISAbits.TRISA0 = 1; // Configure pin 2 for input SAMPLE
-    TRISAbits.TRISA1 = 1; // Configure pin 3 for input MID QRD
-    //TRISBbits.TRISB0 = 1; // Configure pin 4 for input
-    //TRISBbits.TRISB1 = 1; // Configure pin 5 for input   
-    //TRISBbits.TRISB2 = 1; // Configure pin 6 for input
-    TRISAbits.TRISA2 = 1; // Configure pin 7 for input LEFT SENSOR
-    TRISAbits.TRISA3 = 1; // Configure pin 8 for input RIGHT SENSOR
-    //TRISBbits.TRISB4 = 1; // Configure pin 9 for input 
-    TRISBbits.TRISB12 = 1; // Configure pin 15 for input   
-    //TRISBbits.TRISB13 = 1; // Configure pin 16 for input
-    TRISBbits.TRISB14 = 1; // Configure pin 17 for input
-    //TRISBbits.TRISB15 = 1; // Configure pin 18 for input
+// Defines /////////////////////////////////////////////////////////////////////
 
-    // Configure all the analog pins for analog (as opposed to digital)
-    ANSAbits.ANSA0 = 1; // Configure pin 2 for analog SAMPLE QRD
-    ANSAbits.ANSA1 = 1; // Configure pin 3 for analog MID QRD
-    //ANSBbits.ANSB0 = 1; // Configure pin 4 for analog
-    //ANSBbits.ANSB1 = 1; // Configure pin 5 for analog   
-    //ANSBbits.ANSB2 = 1; // Configure pin 6 for analog
-    ANSAbits.ANSA2 = 1; // Configure pin 7 for analOG LEFT SENSOR
-    ANSAbits.ANSA3 = 1; // Configure pin 8 for analog RIGHT SENSOR
-    //ANSBbits.ANSB4 = 1; // Configure pin 9 for analog 
-    //ANSBbits.ANSB12 = 1; // Configure pin 15 for analog   
-    //ANSBbits.ANSB13 = 1; // Configure pin 16 for analog
-    ANSBbits.ANSB14 = 1; // Configure pin 17 for analog
-    //ANSBbits.ANSB15 = 1; // Configure pin 18 for analog
+//// Record the current time to check an upcoming timeout against
+void startTimeout() {
+    T2CON = 0x8030; //64 prescaler yields 4 MHz / 64 /1000 = 62.5 ticks per ms
+    TMR2 = 0x0000;
+}
+//// Check if timeout is enabled (set to nonzero value) and has expired
+bool checkTimeoutExpired(struct sensor_instance* sensor) {
+    return sensor->io_timeout > 0 && (millis() > (sensor->io_timeout));
 }
 
-// This function configures the A/D to read from
-// multiple channels in scan mode.
-void config_ad(void)
-{
-
-    _ADON = 0;    // AD1CON1<15> -- Turn off A/D during config
-
-    // AD1CON1 register
-    _ADSIDL = 0;  // AD1CON1<13> -- A/D continues in idle mode
-    _MODE12 = 1;  // AD1CON1<10> -- 12-bit A/D operation
-    _FORM = 0;    // AD1CON1<9:8> -- Unsigned integer output
-    _SSRC = 7;    // AD1CON1<7:4> -- Auto conversion (internal counter)
-    _ASAM = 1;    // AD1CON1<2> -- Auto sampling
-
-    // AD1CON2 register
-    _PVCFG = 0;   // AD1CON2<15:14> -- Use VDD as positive
-                  // ref voltage
-    _NVCFG = 0;   // AD1CON2<13> -- Use VSS as negative
-                  // ref voltage
-    _BUFREGEN = 1;// AD1CON2<11> -- Result appears in buffer
-                  // location corresponding to channel
-    _CSCNA = 1;   // AD1CON2<10> -- Scans inputs specified
-                  // in AD1CSSx registers
-    _SMPI = 3;    // AD1CON2<6:2> -- Every 9th conversion sent (number of channels sampled -1)
-                  // to buffer (if sampling 10 channels)
-    _ALTS = 0;    // AD1CON2<0> -- Sample MUXA only
-
-    //_CN2PDE = 1;
-
-    // AD1CON3 register
-    _ADRC = 0;    // AD1CON3<15> -- Use system clock
-    _SAMC = 0b00001;    // AD1CON3<12:8> -- Auto sample every A/D
-                  // period TAD
-    _ADCS = 0b00000010;    // AD1CON3<7:0> -- TAD needs to be at least 750 ns. Thus, _ADCS = 0b00000010 will give us the fastest AD clock given a 4 MHz system clock.
-
-    // AD1CSS registers
-    AD1CSSL = 0b0110010000000011; // choose A2D channels you'd like to scan here.
-    //we have pins 15, 16, 2, 3, 7, 8 which are analog channels 12, 11, 0, 1, 13, 14
-    _ADON = 1;    // AD1CON1<15> -- Turn on A/D
+uint16_t millis() {
+    return TMR2 >> 6; //eh, close enough; divides by 64 and is way faster than actual division
 }
 
-#pragma config FNOSC = FRCDIV
 
-double leftval = 0; //pin 13
-double midval = 0; //read from pin 14
-double rightval = 0; // pin 15
+// Decode VCSEL (vertical cavity surface emitting laser) pulse period in PCLKs
+// from register value
+// based on VL53L0X_decode_vcsel_period()
+#define decodeVcselPeriod(reg_val)      (((reg_val) + 1) << 1)
 
-double goal = 2.5;//These are the midline values for each sensor mid sensor
-double goal_l = 2.75; //left sensor
-double goal_r = 2.5; // right sensor
+// Encode VCSEL pulse period register value from period in PCLKs
+// based on VL53L0X_encode_vcsel_period()
+#define encodeVcselPeriod(period_pclks) (((period_pclks) >> 1) - 1)
 
-double freq_right = 0; //the pwm frequencies at which the motor will drive
-double freq_left = 0;
+// Calculate macro period in *nanoseconds* from VCSEL period in PCLKs
+// based on VL53L0X_calc_macro_period_ps()
+// PLL_period_ps = 1655; macro_period_vclks = 2304
+#define calcMacroPeriod(vcsel_period_pclks) ((((uint32_t)2304 * (vcsel_period_pclks) * 1655) + 500) / 1000)
 
-int i = 0;
+// Constructors (not anymore lol, this ain't a class no more)////////////////////////////////////////////////////////////////
 
-
-double pwm_output = 0;// control signal in line following
-
-double interval = .01;//if we use a time interval
-
-double kd = 0;//proportional and derivative gains
-double kp = 1;
-
-double fcy = 2000000;
-
-double max_freq = 351;//This is the fastest we want the steppers to move
-double min_freq = 85;//slowest
-double std_freq = 218;
-
-int ball = 0;
-int steps = 0;
-int steps_needed;
-
-enum superstate {start_s, line_s, collection_s, canyon_s, samp_return_s, data_trans_s};
-
-enum superstate ss = line_s;
-
-uint16_t threshold = 165;
-
-
-
-#define EXPANDER_ADDR 0b0111000
-#define LED_ARR_ADDR 0b0111001
-
+// The Arduino two-wire interface uses a 7-bit number for the address,
+// and sets the last bit correctly based on reads and writes
 #define ADDRESS_DEFAULT 0b0101001
 
-static uint8_t LATC = 0x00; //IO expander
-static uint8_t LATD = 0x00; //LED bank
-
-uint16_t TOF_l;
-uint16_t TOF_m;
-uint16_t TOF_r;
-uint16_t TOF_samp;
-
-
-
-void write_expander(uint8_t address, uint8_t byte) {
-    start(address);
-    write(byte);
-    stop();
+//pseudo-constructor
+struct sensor_instance construct_sensor_instance() {
+    struct sensor_instance to_return = {.address = ADDRESS_DEFAULT, .io_timeout = 0, .did_timeout = false, .stop_variable = 0, .measurement_timing_budget_us = 0, .last_measurement = 0x2FFF};
+    return to_return;
 }
 
-void write_state(uint8_t data) { //only lower 3 bits matter
-    LATD = (LATD & 0b11111000) | ((~data) & 0b00000111);
-    write_expander(LED_ARR_ADDR, LATD);
+
+// Public Methods //////////////////////////////////////////////////////////////
+
+void setAddress(struct sensor_instance* sensor, uint8_t new_addr)
+{
+  writeReg(sensor, I2C_SLAVE_DEVICE_ADDRESS, new_addr & 0x7F);
+  sensor->address = new_addr;
+}
+uint8_t getAddress(struct sensor_instance* sensor) {
+    return sensor->address; 
 }
 
-void write_substate(uint8_t data) { //only lower 3 bits matter
-    LATD = (LATD & 0b11000111) | (((~data) << 3) & 0b00111000);
-    write_expander(LED_ARR_ADDR, LATD);
-}
+// Initialize sensor using sequence based on VL53L0X_DataInit(),
+// VL53L0X_StaticInit(), and VL53L0X_PerformRefCalibration().
+// This function does not perform reference SPAD calibration
+// (VL53L0X_PerformRefSpadManagement()), since the API user manual says that it
+// is performed by ST on the bare modules; it seems like that should work well
+// enough unless a cover glass is added.
+// If io_2v8 (optional) is true or not given, the sensor is configured for 2V8
+// mode.
+// default value for io_2v8 doesn't exist because this isn't c++; use true by default
+bool init(struct sensor_instance* sensor, bool io_2v8)
+{
+  // check model ID register (value specified in datasheet)
+  if (readReg(sensor, IDENTIFICATION_MODEL_ID) != 0xEE) { return false; }
+  
+  // VL53L0X_DataInit() begin
 
-enum which_ToF {
-    FRONT,
-    RIGHT,
-    LEFT,
-    SAMPLE_RETURN,
-    SPARE
-};
+  // sensor uses 1V8 mode for I/O by default; switch to 2V8 mode if necessary
+  if (io_2v8)
+  {
+    writeReg(sensor, VHV_CONFIG_PAD_SCL_SDA__EXTSUP_HV,
+      readReg(sensor, VHV_CONFIG_PAD_SCL_SDA__EXTSUP_HV) | 0x01); // set bit 0
+  }
 
+  // "Set I2C standard mode"
+  writeReg(sensor, 0x88, 0x00);
 
-struct sensor_instance sensors[NUM_OF_TOFS];
+  writeReg(sensor, 0x80, 0x01);
+  writeReg(sensor, 0xFF, 0x01);
+  writeReg(sensor, 0x00, 0x00);
+  sensor->stop_variable = readReg(sensor, 0x91);
+  writeReg(sensor, 0x00, 0x01);
+  writeReg(sensor, 0xFF, 0x00);
+  writeReg(sensor, 0x80, 0x00);
 
-void init_tofs() {
-    write_expander(EXPANDER_ADDR, 0x00);
-    
-    struct sensor_instance default_address_dummy = construct_sensor_instance();
-    for (int i=0; i<NUM_OF_TOFS; i++) {
-        LATC = LATC && (1 << i);
-        for(int k=0; k<100; k++) {
-            write_expander(EXPANDER_ADDR, LATC);
-        }
-        sensors[i] = construct_sensor_instance();
-        uint8_t new_addr = 0x40 + i;
-        setAddress(&(sensors[i]), new_addr);
-        //Make sure that worked:
-        for(int k=0; k<100; k++) {
-            writeReg(&(default_address_dummy), I2C_SLAVE_DEVICE_ADDRESS, new_addr & 0x7F);
-        }
-        init(&(sensors[i]), true);
-        startContinuous(&(sensors[i]), 0);
+  // disable SIGNAL_RATE_MSRC (bit 1) and SIGNAL_RATE_PRE_RANGE (bit 4) limit checks
+  writeReg(sensor, MSRC_CONFIG_CONTROL, readReg(sensor, MSRC_CONFIG_CONTROL) | 0x12);
+
+  // set final range signal rate limit to 0.25 MCPS (million counts per second)
+  setSignalRateLimit(sensor, 0.25);
+
+  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, 0xFF);
+
+  // VL53L0X_DataInit() end
+
+  // VL53L0X_StaticInit() begin
+
+  uint8_t spad_count;
+  bool spad_type_is_aperture;
+  if (!getSpadInfo(sensor, &spad_count, &spad_type_is_aperture)) { return false; }
+
+  // The SPAD map (RefGoodSpadMap) is read by VL53L0X_get_info_from_device() in
+  // the API, but the same data seems to be more easily readable from
+  // GLOBAL_CONFIG_SPAD_ENABLES_REF_0 through _6, so read it from there
+  uint8_t ref_spad_map[6];
+  readMulti(sensor, GLOBAL_CONFIG_SPAD_ENABLES_REF_0, ref_spad_map, 6);
+
+  // -- VL53L0X_set_reference_spads() begin (assume NVM values are valid)
+
+  writeReg(sensor, 0xFF, 0x01);
+  writeReg(sensor, DYNAMIC_SPAD_REF_EN_START_OFFSET, 0x00);
+  writeReg(sensor, DYNAMIC_SPAD_NUM_REQUESTED_REF_SPAD, 0x2C);
+  writeReg(sensor, 0xFF, 0x00);
+  writeReg(sensor, GLOBAL_CONFIG_REF_EN_START_SELECT, 0xB4);
+
+  uint8_t first_spad_to_enable = spad_type_is_aperture ? 12 : 0; // 12 is the first aperture spad
+  uint8_t spads_enabled = 0;
+
+  for (uint8_t i = 0; i < 48; i++)
+  {
+    if (i < first_spad_to_enable || spads_enabled == spad_count)
+    {
+      // This bit is lower than the first one that should be enabled, or
+      // (reference_spad_count) bits have already been enabled, so zero this bit
+      ref_spad_map[i / 8] &= ~(1 << (i % 8));
     }
-}
-
-void adjust_differential(uint16_t left) {
-    static uint16_t old_left = 0;
-    int base_oc2rs = 1249;
-    OC2RS =  base_oc2rs + ((left - old_left)>>2);//right wheel period;
-    old_left = left;
-}
-
-
-
-
-
-
-void line_follower(double leftval, double midval, double rightval){
-
-        
-        double error = midval - goal;
-        
-        static double olderror = 0;
-        static double alpha = 0;
-        error = (alpha*olderror) + ((1-alpha)*error);
-        double error_derivative = error - olderror;
-        olderror = error;
-
-        pwm_output = kp * error - kd * error_derivative;
-        freq_right = std_freq * (1+pwm_output);
-        freq_left = std_freq * (1 - pwm_output);
-        if(freq_right <= min_freq){ //set max and min speeds for motors
-            OC2RS = fcy / min_freq;
-        }
-        else if(freq_right >= max_freq){
-            OC2RS = fcy / max_freq;
-        }
-        else{
-            OC2RS = fcy / freq_right;
-        }
-
-        if(freq_left <= min_freq){
-            OC3RS = fcy / min_freq;
-        }
-        else if(freq_left >= max_freq){
-            OC3RS = fcy / max_freq;
-        }
-        else{
-            OC3RS = fcy / freq_left;
-        }
-        OC2R = .5*OC2RS;
-        OC3R = .5*OC3RS;
-
-
-        if(leftval < goal_l){
-            OC3RS= fcy/min_freq;
-            OC2RS = fcy/max_freq;
-            OC3R = 0;
-            OC2R = .5*OC2RS;
-        }
-        if(rightval < goal_r){
-            OC3RS= fcy/max_freq;
-            OC2RS = fcy/min_freq;
-            OC3R = .5*OC3RS;
-            OC2R = 0;
-        }
-}
-void forward(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 6000;
-    OC3R = 6000;
-    _LATB4 = 0;
-    _LATA4 = 0;
-}
-void left_center(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 6000;
-    OC3R = 6000;
-    _LATB4 = 1;
-    _LATA4 = 0;
-}
-void right_center(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 6000;
-    OC3R = 6000;
-    _LATB4 = 0;
-    _LATA4 = 1;
-}
-void left_pivot(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 6000;
-    OC3R = 0;
-    _LATB4 = 0;
-    _LATA4 = 0;
-}
-void right_pivot(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 0;
-    OC3R = 6000;
-    _LATB4 = 0;
-    _LATA4 = 0;
-}
-void reverse(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 6000;
-    OC3R = 6000;
-    _LATB4 = 1;
-    _LATA4 = 1;
-}
-void stop_robot(){
-    OC3RS = 12049;
-    OC2RS = 12049;
-    OC2R = 0;
-    OC3R = 0;
-    _LATB4 = 0;
-    _LATA4 = 0;
-}
-
-void findline1(){
-    static int state = 1;
-    switch(state){
-        case 1:
-            forward();
-            double left_qrd = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
-            double right_qrd = (double)ADC1BUF14/4095*3.3;
-            if(left_qrd < 2.5 && right_qrd <2.5){
-                steps_needed = 270;
-                _OC3IE = 1;
-                state = 2;
-            } 
-            break;
-        case 2:
-            left_pivot();
-            if(steps >= steps_needed){
-                _OC3IE = 0;
-                steps = 0;
-                state = 1;
-                ss = line_s;
-            }
-            break;
+    else if ((ref_spad_map[i / 8] >> (i % 8)) & 0x1)
+    {
+      spads_enabled++;
     }
-    write_substate(state);
+  }
+
+  writeMulti(sensor, GLOBAL_CONFIG_SPAD_ENABLES_REF_0, ref_spad_map, 6);
+
+  // -- VL53L0X_set_reference_spads() end
+
+  // -- VL53L0X_load_tuning_settings() begin
+  // DefaultTuningSettings from vl53l0x_tuning.h
+  
+  //length of data_table is 160
+  const uint8_t data_table[] = {
+
+  0xFF, 0x01,
+  0x00, 0x00,
+
+  0xFF, 0x00,
+  0x09, 0x00,
+  0x10, 0x00,
+  0x11, 0x00,
+
+  0x24, 0x01,
+  0x25, 0xFF,
+  0x75, 0x00,
+
+  0xFF, 0x01,
+  0x4E, 0x2C,
+  0x48, 0x00,
+  0x30, 0x20,
+
+  0xFF, 0x00,
+  0x30, 0x09,
+  0x54, 0x00,
+  0x31, 0x04,
+  0x32, 0x03,
+  0x40, 0x83,
+  0x46, 0x25,
+  0x60, 0x00,
+  0x27, 0x00,
+  0x50, 0x06,
+  0x51, 0x00,
+  0x52, 0x96,
+  0x56, 0x08,
+  0x57, 0x30,
+  0x61, 0x00,
+  0x62, 0x00,
+  0x64, 0x00,
+  0x65, 0x00,
+  0x66, 0xA0,
+
+  0xFF, 0x01,
+  0x22, 0x32,
+  0x47, 0x14,
+  0x49, 0xFF,
+  0x4A, 0x00,
+
+  0xFF, 0x00,
+  0x7A, 0x0A,
+  0x7B, 0x00,
+  0x78, 0x21,
+
+  0xFF, 0x01,
+  0x23, 0x34,
+  0x42, 0x00,
+  0x44, 0xFF,
+  0x45, 0x26,
+  0x46, 0x05,
+  0x40, 0x40,
+  0x0E, 0x06,
+  0x20, 0x1A,
+  0x43, 0x40,
+
+  0xFF, 0x00,
+  0x34, 0x03,
+  0x35, 0x44,
+
+  0xFF, 0x01,
+  0x31, 0x04,
+  0x4B, 0x09,
+  0x4C, 0x05,
+  0x4D, 0x04,
+
+  0xFF, 0x00,
+  0x44, 0x00,
+  0x45, 0x20,
+  0x47, 0x08,
+  0x48, 0x28,
+  0x67, 0x00,
+  0x70, 0x04,
+  0x71, 0x01,
+  0x72, 0xFE,
+  0x76, 0x00,
+  0x77, 0x00,
+
+  0xFF, 0x01,
+  0x0D, 0x01,
+
+  0xFF, 0x00,
+  0x80, 0x01,
+  0x01, 0xF8,
+
+  0xFF, 0x01,
+  0x8E, 0x01,
+  0x00, 0x01,
+  0xFF, 0x00,
+  0x80, 0x00,
+  
+  };
+
+  
+  for (uint8_t i=0; i<160; i=i+2) {
+      writeReg(sensor, data_table[i], data_table[i+1]);
+  }
+  // -- VL53L0X_load_tuning_settings() end
+
+  // "Set interrupt config to new sample ready"
+  // -- VL53L0X_SetGpioConfig() begin
+
+  writeReg(sensor, SYSTEM_INTERRUPT_CONFIG_GPIO, 0x04);
+  writeReg(sensor, GPIO_HV_MUX_ACTIVE_HIGH, readReg(sensor, GPIO_HV_MUX_ACTIVE_HIGH) & ~0x10); // active low
+  writeReg(sensor, SYSTEM_INTERRUPT_CLEAR, 0x01);
+
+  // -- VL53L0X_SetGpioConfig() end
+
+  sensor->measurement_timing_budget_us = 40000;//hardcoded for code size//getMeasurementTimingBudget(sensor);
+
+  // "Disable MSRC and TCC by default"
+  // MSRC = Minimum Signal Rate Check
+  // TCC = Target CentreCheck
+  // -- VL53L0X_SetSequenceStepEnable() begin
+
+  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, 0xE8);
+
+  // -- VL53L0X_SetSequenceStepEnable() end
+
+  // "Recalculate timing budget"
+  setMeasurementTimingBudget(sensor, sensor->measurement_timing_budget_us);
+
+  // VL53L0X_StaticInit() end
+
+  // VL53L0X_PerformRefCalibration() begin (VL53L0X_perform_ref_calibration())
+
+  // -- VL53L0X_perform_vhv_calibration() begin
+
+  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, 0x01);
+  if (!performSingleRefCalibration(sensor, 0x40)) { return false; }
+
+  // -- VL53L0X_perform_vhv_calibration() end
+
+  // -- VL53L0X_perform_phase_calibration() begin
+
+  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, 0x02);
+  if (!performSingleRefCalibration(sensor, 0x00)) { return false; }
+
+  // -- VL53L0X_perform_phase_calibration() end
+
+  // "restore the previous Sequence Config"
+  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, 0xE8);
+
+  // VL53L0X_PerformRefCalibration() end
+
+  return true;
 }
 
-void samp_collect(int turn_steps, int move_steps, int turn_steps2){
-    static int state = 1;
-    switch(state){
-        case 1:
-            _OC3IE = 1;
-            steps = 0;
-            right_pivot();
-            state = 2;
-            break;
-        case 2:
-            if(steps >= turn_steps){
-                steps = 0;
-                forward();
-                state = 3;
-            }
-            break;
-        case 3:
-            if(steps >= move_steps){
-                steps = 0;
-                stop_robot();
-                state = 4;
-                i = 0;
-            }
-            break;
-        case 4:
-            i++;
-            if(i >= 1000){
-                ball = 1;
-                steps = 0;
-                reverse();
-                state = 5;
-                i = 0;
-            }
-            break;
-        case 5:
-            if(steps >= move_steps){
-                steps = 0;
-                left_center();
-                state = 6;
-            }
-            break;
-        case 6:
-            if(steps >= turn_steps2){
-                _OC3IE = 0;
-                steps = 0;
-                ss = line_s;
-                _LATB4 = 0;
-                _LATA4 = 0;
-            }
-            break;   
+
+// Write an 8-bit register
+void writeReg(struct sensor_instance* sensor, uint8_t reg, uint8_t value)
+{
+  start(sensor->address);
+  write(reg);
+  write(value);
+  stop();
+}
+
+// Write a 16-bit register
+void writeReg16Bit(struct sensor_instance* sensor, uint8_t reg, uint16_t value)
+{
+  start(sensor->address);
+  write(reg);
+  write((uint8_t)(value >> 8)); // value high byte
+  write((uint8_t)(value)); // value low byte
+  stop();
+}
+
+// Write a 32-bit register
+void writeReg32Bit(struct sensor_instance* sensor, uint8_t reg, uint32_t value)
+{
+  start(sensor->address);
+  write(reg);
+  write((uint8_t)(value >> 24)); // value highest byte
+  write((uint8_t)(value >> 16));
+  write((uint8_t)(value >>  8));
+  write((uint8_t)(value));       // value lowest byte
+  stop();
+}
+
+// Read an 8-bit register
+uint8_t readReg(struct sensor_instance* sensor, uint8_t reg)
+{
+  uint8_t value;
+  
+  start(sensor->address);
+  write(reg);
+  stop(); //this shouldn't be here per the spec
+  //LATAbits.LATA1 = 1;
+  requestFrom(sensor->address, (uint8_t)1);
+  value = read(false);
+  //LATAbits.LATA1 = 0;
+  
+  
+  stop(); //was this missing?
+  //LATAbits.LATA0 = 1;
+  return value;
+}
+
+// Read a 16-bit register
+uint16_t readReg16Bit(struct sensor_instance* sensor, uint8_t reg)
+{
+  uint16_t value;
+
+  start(sensor->address);
+  write(reg);
+  stop();//this shouldn't be here per the spec
+
+  requestFrom(sensor->address, (uint8_t)2);
+  value  = (uint16_t)read(true) << 8; // value high byte
+  value |=           read(false);      // value low byte
+  
+  stop(); //was this missing?
+  return value;
+}
+
+// Read a 32-bit register
+uint32_t readReg32Bit(struct sensor_instance* sensor, uint8_t reg)
+{
+  uint32_t value;
+
+  start(sensor->address);
+  write(reg);
+  stop();//this shouldn't be here per the spec
+
+  requestFrom(sensor->address, (uint8_t)4);
+  value  = (uint32_t)read(true) << 24; // value highest byte
+  value |= (uint32_t)read(true) << 16;
+  value |= (uint16_t)read(true) <<  8;
+  value |=           read(false);       // value lowest byte
+
+  stop(); //was this missing?
+  return value;
+}
+
+// Write an arbitrary number of bytes from the given array to the sensor,
+// starting at the given register
+void writeMulti(struct sensor_instance* sensor, uint8_t reg, uint8_t const * src, uint8_t count)
+{
+  start(sensor->address);
+  write(reg);
+
+  while (count-- > 0)
+  {
+    write(*(src++));
+  }
+
+  stop();
+}
+
+// Read an arbitrary number of bytes from the sensor, starting at the given
+// register, into the given array
+void readMulti(struct sensor_instance* sensor, uint8_t reg, uint8_t * dst, uint8_t count)
+{
+  start(sensor->address);
+  write(reg);
+  stop(); //this shouldn't be here per the spec
+
+  requestFrom(sensor->address, count);
+
+  while (count-- > 0)
+  {
+    *(dst++) = read((bool) count);
+  }
+  stop(); //Was this missing?
+}
+
+// Set the return signal rate limit check value in units of MCPS (mega counts
+// per second). "This represents the amplitude of the signal reflected from the
+// target and detected by the device"; setting this limit presumably determines
+// the minimum measurement necessary for the sensor to report a valid reading.
+// Setting a lower limit increases the potential range of the sensor but also
+// seems to increase the likelihood of getting an inaccurate reading because of
+// unwanted reflections from objects other than the intended target.
+// Defaults to 0.25 MCPS as initialized by the ST API and this library.
+bool setSignalRateLimit(struct sensor_instance* sensor, float limit_Mcps)
+{
+  if (limit_Mcps < 0 || limit_Mcps > 511.99) { return false; }
+
+  // Q9.7 fixed point format (9 integer bits, 7 fractional bits)
+  writeReg16Bit(sensor, FINAL_RANGE_CONFIG_MIN_COUNT_RATE_RTN_LIMIT, limit_Mcps * (1 << 7));
+  return true;
+}
+
+// Get the return signal rate limit check value in MCPS
+float getSignalRateLimit(struct sensor_instance* sensor)
+{
+  return (float)readReg16Bit(sensor, FINAL_RANGE_CONFIG_MIN_COUNT_RATE_RTN_LIMIT) / (1 << 7);
+}
+
+// Set the measurement timing budget in microseconds, which is the time allowed
+// for one measurement; the ST API and this library take care of splitting the
+// timing budget among the sub-steps in the ranging sequence. A longer timing
+// budget allows for more accurate measurements. Increasing the budget by a
+// factor of N decreases the range measurement standard deviation by a factor of
+// sqrt(N). Defaults to about 33 milliseconds; the minimum is 20 ms.
+// based on VL53L0X_set_measurement_timing_budget_micro_seconds()
+bool setMeasurementTimingBudget(struct sensor_instance* sensor, uint32_t budget_us)
+{
+//  struct SequenceStepEnables enables;
+//  struct SequenceStepTimeouts timeouts;
+
+//  uint16_t const StartOverhead     = 1910;
+//  uint16_t const EndOverhead        = 960;
+//  uint16_t const MsrcOverhead       = 660;
+//  uint16_t const TccOverhead        = 590;
+//  uint16_t const DssOverhead        = 690;
+//  uint16_t const PreRangeOverhead   = 660;
+//  uint16_t const FinalRangeOverhead = 550;
+  uint16_t const SingleOverhead = 5000;
+
+//  uint32_t used_budget_us = StartOverhead + EndOverhead;
+//
+//  getSequenceStepEnables(sensor, &enables);
+//  getSequenceStepTimeouts(sensor, &enables, &timeouts);
+//
+//  if (enables.tcc)
+//  {
+//    used_budget_us += (timeouts.msrc_dss_tcc_us + TccOverhead);
+//  }
+//
+//  if (enables.dss)
+//  {
+//    used_budget_us += 2 * (timeouts.msrc_dss_tcc_us + DssOverhead);
+//  }
+//  else if (enables.msrc)
+//  {
+//    used_budget_us += (timeouts.msrc_dss_tcc_us + MsrcOverhead);
+//  }
+//
+//  if (enables.pre_range)
+//  {
+//    used_budget_us += (timeouts.pre_range_us + PreRangeOverhead);
+//  }
+//
+//  if (enables.final_range)
+//  {
+//    used_budget_us += FinalRangeOverhead;
+
+    // "Note that the final range timeout is determined by the timing
+    // budget and the sum of all other timeouts within the sequence.
+    // If there is no room for the final range timeout, then an error
+    // will be set. Otherwise the remaining time will be applied to
+    // the final range."
+
+//    if (used_budget_us > budget_us)
+//    {
+//      // "Requested timeout too big."
+//      return false;
+//    }
+
+    //uint32_t final_range_timeout_us = budget_us - used_budget_us;
+    uint32_t final_range_timeout_us = budget_us - SingleOverhead;
+    // set_sequence_step_timeout() begin
+    // (SequenceStepId == VL53L0X_SEQUENCESTEP_FINAL_RANGE)
+
+    // "For the final range timeout, the pre-range timeout
+    //  must be added. To do this both final and pre-range
+    //  timeouts must be expressed in macro periods MClks
+    //  because they have different vcsel periods."
+
+    uint32_t final_range_timeout_mclks =
+      timeoutMicrosecondsToMclks(final_range_timeout_us,
+                                 //timeouts.final_range_vcsel_period_pclks);
+                                 10); //hard coded to reduce code complexity
+
+//    if (enables.pre_range)
+//    {
+//      final_range_timeout_mclks += timeouts.pre_range_mclks;
+//    }
+
+    writeReg16Bit(sensor, FINAL_RANGE_CONFIG_TIMEOUT_MACROP_HI,
+      encodeTimeout(final_range_timeout_mclks));
+
+    // set_sequence_step_timeout() end
+
+    sensor->measurement_timing_budget_us = budget_us; // store for internal reuse
+  return true;
+}
+
+// Get the measurement timing budget in microseconds
+// based on VL53L0X_get_measurement_timing_budget_micro_seconds()
+// in us
+//uint32_t getMeasurementTimingBudget(struct sensor_instance* sensor)
+//{
+//  struct SequenceStepEnables enables;
+//  struct SequenceStepTimeouts timeouts;
+//
+//  uint16_t const StartOverhead     = 1910;
+//  uint16_t const EndOverhead        = 960;
+//  uint16_t const MsrcOverhead       = 660;
+//  uint16_t const TccOverhead        = 590;
+//  uint16_t const DssOverhead        = 690;
+//  uint16_t const PreRangeOverhead   = 660;
+//  uint16_t const FinalRangeOverhead = 550;
+//
+//  // "Start and end overhead times always present"
+//  uint32_t budget_us = StartOverhead + EndOverhead;
+//
+//  getSequenceStepEnables(sensor, &enables);
+//  getSequenceStepTimeouts(sensor, &enables, &timeouts);
+//
+//  if (enables.tcc)
+//  {
+//    budget_us += (timeouts.msrc_dss_tcc_us + TccOverhead);
+//  }
+//
+//  if (enables.dss)
+//  {
+//    budget_us += 2 * (timeouts.msrc_dss_tcc_us + DssOverhead);
+//  }
+//  else if (enables.msrc)
+//  {
+//    budget_us += (timeouts.msrc_dss_tcc_us + MsrcOverhead);
+//  }
+//
+//  if (enables.pre_range)
+//  {
+//    budget_us += (timeouts.pre_range_us + PreRangeOverhead);
+//  }
+//
+//  if (enables.final_range)
+//  {
+//    budget_us += (timeouts.final_range_us + FinalRangeOverhead);
+//  }
+//  
+//  sensor->measurement_timing_budget_us = budget_us; // store for internal reuse
+//  return budget_us;
+//}
+
+
+//Since we aren't using longer-range mode, this function is unnecessary
+
+// Set the VCSEL (vertical cavity surface emitting laser) pulse period for the
+// given period type (pre-range or final range) to the given value in PCLKs.
+// Longer periods seem to increase the potential range of the sensor.
+// Valid values are (even numbers only):
+//  pre:  12 to 18 (initialized default: 14)
+//  final: 8 to 14 (initialized default: 10)
+// based on VL53L0X_set_vcsel_pulse_period()
+//bool setVcselPulsePeriod(struct sensor_instance* sensor, enum vcselPeriodType period_type, uint8_t period_pclks)
+//{
+//  uint8_t vcsel_period_reg = encodeVcselPeriod(period_pclks);
+//
+//  struct SequenceStepEnables enables;
+//  struct SequenceStepTimeouts timeouts;
+//
+//  getSequenceStepEnables(sensor, &enables);
+//  getSequenceStepTimeouts(sensor, &enables, &timeouts);
+//
+//  // "Apply specific settings for the requested clock period"
+//  // "Re-calculate and apply timeouts, in macro periods"
+//
+//  // "When the VCSEL period for the pre or final range is changed,
+//  // the corresponding timeout must be read from the device using
+//  // the current VCSEL period, then the new VCSEL period can be
+//  // applied. The timeout then must be written back to the device
+//  // using the new VCSEL period.
+//  //
+//  // For the MSRC timeout, the same applies - this timeout being
+//  // dependant on the pre-range vcsel period."
+//
+//
+//  if (period_type == VcselPeriodPreRange)
+//  {
+//    // "Set phase check limits"
+//    switch (period_pclks)
+//    {
+//      case 12:
+//        writeReg(sensor, PRE_RANGE_CONFIG_VALID_PHASE_HIGH, 0x18);
+//        break;
+//
+//      case 14:
+//        writeReg(sensor, PRE_RANGE_CONFIG_VALID_PHASE_HIGH, 0x30);
+//        break;
+//
+//      case 16:
+//        writeReg(sensor, PRE_RANGE_CONFIG_VALID_PHASE_HIGH, 0x40);
+//        break;
+//
+//      case 18:
+//        writeReg(sensor, PRE_RANGE_CONFIG_VALID_PHASE_HIGH, 0x50);
+//        break;
+//
+//      default:
+//        // invalid period
+//        return false;
+//    }
+//    writeReg(sensor, PRE_RANGE_CONFIG_VALID_PHASE_LOW, 0x08);
+//
+//    // apply new VCSEL period
+//    writeReg(sensor, PRE_RANGE_CONFIG_VCSEL_PERIOD, vcsel_period_reg);
+//
+//    // update timeouts
+//
+//    // set_sequence_step_timeout() begin
+//    // (SequenceStepId == VL53L0X_SEQUENCESTEP_PRE_RANGE)
+//
+//    uint16_t new_pre_range_timeout_mclks =
+//      timeoutMicrosecondsToMclks(timeouts.pre_range_us, period_pclks);
+//
+//    writeReg16Bit(sensor, PRE_RANGE_CONFIG_TIMEOUT_MACROP_HI,
+//      encodeTimeout(new_pre_range_timeout_mclks));
+//
+//    // set_sequence_step_timeout() end
+//
+//    // set_sequence_step_timeout() begin
+//    // (SequenceStepId == VL53L0X_SEQUENCESTEP_MSRC)
+//
+//    uint16_t new_msrc_timeout_mclks =
+//      timeoutMicrosecondsToMclks(timeouts.msrc_dss_tcc_us, period_pclks);
+//
+//    writeReg(sensor, MSRC_CONFIG_TIMEOUT_MACROP,
+//      (new_msrc_timeout_mclks > 256) ? 255 : (new_msrc_timeout_mclks - 1));
+//
+//    // set_sequence_step_timeout() end
+//  }
+//  else if (period_type == VcselPeriodFinalRange)
+//  {
+//    switch (period_pclks)
+//    {
+//      case 8:
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_HIGH, 0x10);
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_LOW,  0x08);
+//        writeReg(sensor, GLOBAL_CONFIG_VCSEL_WIDTH, 0x02);
+//        writeReg(sensor, ALGO_PHASECAL_CONFIG_TIMEOUT, 0x0C);
+//        writeReg(sensor, 0xFF, 0x01);
+//        writeReg(sensor, ALGO_PHASECAL_LIM, 0x30);
+//        writeReg(sensor, 0xFF, 0x00);
+//        break;
+//
+//      case 10:
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_HIGH, 0x28);
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_LOW,  0x08);
+//        writeReg(sensor, GLOBAL_CONFIG_VCSEL_WIDTH, 0x03);
+//        writeReg(sensor, ALGO_PHASECAL_CONFIG_TIMEOUT, 0x09);
+//        writeReg(sensor, 0xFF, 0x01);
+//        writeReg(sensor, ALGO_PHASECAL_LIM, 0x20);
+//        writeReg(sensor, 0xFF, 0x00);
+//        break;
+//
+//      case 12:
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_HIGH, 0x38);
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_LOW,  0x08);
+//        writeReg(sensor, GLOBAL_CONFIG_VCSEL_WIDTH, 0x03);
+//        writeReg(sensor, ALGO_PHASECAL_CONFIG_TIMEOUT, 0x08);
+//        writeReg(sensor, 0xFF, 0x01);
+//        writeReg(sensor, ALGO_PHASECAL_LIM, 0x20);
+//        writeReg(sensor, 0xFF, 0x00);
+//        break;
+//
+//      case 14:
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_HIGH, 0x48);
+//        writeReg(sensor, FINAL_RANGE_CONFIG_VALID_PHASE_LOW,  0x08);
+//        writeReg(sensor, GLOBAL_CONFIG_VCSEL_WIDTH, 0x03);
+//        writeReg(sensor, ALGO_PHASECAL_CONFIG_TIMEOUT, 0x07);
+//        writeReg(sensor, 0xFF, 0x01);
+//        writeReg(sensor, ALGO_PHASECAL_LIM, 0x20);
+//        writeReg(sensor, 0xFF, 0x00);
+//        break;
+//
+//      default:
+//        // invalid period
+//        return false;
+//    }
+//
+//    // apply new VCSEL period
+//    writeReg(sensor, FINAL_RANGE_CONFIG_VCSEL_PERIOD, vcsel_period_reg);
+//
+//    // update timeouts
+//
+//    // set_sequence_step_timeout() begin
+//    // (SequenceStepId == VL53L0X_SEQUENCESTEP_FINAL_RANGE)
+//
+//    // "For the final range timeout, the pre-range timeout
+//    //  must be added. To do this both final and pre-range
+//    //  timeouts must be expressed in macro periods MClks
+//    //  because they have different vcsel periods."
+//
+//    uint16_t new_final_range_timeout_mclks =
+//      timeoutMicrosecondsToMclks(timeouts.final_range_us, period_pclks);
+//
+//    if (enables.pre_range)
+//    {
+//      new_final_range_timeout_mclks += timeouts.pre_range_mclks;
+//    }
+//
+//    writeReg16Bit(sensor, FINAL_RANGE_CONFIG_TIMEOUT_MACROP_HI,
+//      encodeTimeout(new_final_range_timeout_mclks));
+//
+//    // set_sequence_step_timeout end
+//  }
+//  else
+//  {
+//    // invalid type
+//    return false;
+//  }
+//
+//  // "Finally, the timing budget must be re-applied"
+//
+//  setMeasurementTimingBudget(sensor, sensor->measurement_timing_budget_us);
+//
+//  // "Perform the phase calibration. This is needed after changing on vcsel period."
+//  // VL53L0X_perform_phase_calibration() begin
+//
+//  uint8_t sequence_config = readReg(sensor, SYSTEM_SEQUENCE_CONFIG);
+//  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, 0x02);
+//  performSingleRefCalibration(sensor, 0x0);
+//  writeReg(sensor, SYSTEM_SEQUENCE_CONFIG, sequence_config);
+//
+//  // VL53L0X_perform_phase_calibration() end
+//
+//  return true;
+//}
+
+// Get the VCSEL pulse period in PCLKs for the given period type.
+// based on VL53L0X_get_vcsel_pulse_period()
+//uint8_t getVcselPulsePeriod(struct sensor_instance* sensor, enum vcselPeriodType period_type)
+//{
+//  if (period_type == VcselPeriodPreRange)
+//  {
+//    return decodeVcselPeriod(readReg(sensor, PRE_RANGE_CONFIG_VCSEL_PERIOD));
+//  }
+//  else if (period_type == VcselPeriodFinalRange)
+//  {
+//    return decodeVcselPeriod(readReg(sensor, FINAL_RANGE_CONFIG_VCSEL_PERIOD));
+//  }
+//  else { return 255; }
+//}
+
+// Start continuous ranging measurements. If period_ms (optional) is 0 or not
+// given, continuous back-to-back mode is used (the sensor takes measurements as
+// often as possible); otherwise, continuous timed mode is used, with the given
+// inter-measurement period in milliseconds determining how often the sensor
+// takes a measurement.
+// based on VL53L0X_StartMeasurement()
+void startContinuous(struct sensor_instance* sensor, uint32_t period_ms) //default 0
+{
+  writeReg(sensor, 0x80, 0x01);
+  writeReg(sensor, 0xFF, 0x01);
+  writeReg(sensor, 0x00, 0x00);
+  writeReg(sensor, 0x91, sensor->stop_variable);
+  writeReg(sensor, 0x00, 0x01);
+  writeReg(sensor, 0xFF, 0x00);
+  writeReg(sensor, 0x80, 0x00);
+
+  if (period_ms != 0)
+  {
+    // continuous timed mode
+
+    // VL53L0X_SetInterMeasurementPeriodMilliSeconds() begin
+
+    uint16_t osc_calibrate_val = readReg16Bit(sensor, OSC_CALIBRATE_VAL);
+
+    if (osc_calibrate_val != 0)
+    {
+      period_ms *= osc_calibrate_val;
     }
-    write_substate(state);
+
+    writeReg32Bit(sensor, SYSTEM_INTERMEASUREMENT_PERIOD, period_ms);
+
+    // VL53L0X_SetInterMeasurementPeriodMilliSeconds() end
+
+    writeReg(sensor, SYSRANGE_START, 0x04); // VL53L0X_REG_SYSRANGE_MODE_TIMED
+  }
+  else
+  {
+    // continuous back-to-back mode
+    writeReg(sensor, SYSRANGE_START, 0x02); // VL53L0X_REG_SYSRANGE_MODE_BACKTOBACK
+  }
 }
 
-void Solenoid_On(int pin){
-    LATC = LATC | (1 << pin);
-    write_expander(EXPANDER_ADDR, LATC);
+// Stop continuous measurements
+// based on VL53L0X_StopMeasurement()
+void stopContinuous(struct sensor_instance* sensor)
+{
+  writeReg(sensor, SYSRANGE_START, 0x01); // VL53L0X_REG_SYSRANGE_MODE_SINGLESHOT
+
+  writeReg(sensor, 0xFF, 0x01);
+  writeReg(sensor, 0x00, 0x00);
+  writeReg(sensor, 0x91, 0x00);
+  writeReg(sensor, 0x00, 0x01);
+  writeReg(sensor, 0xFF, 0x00);
 }
 
-void Solenoid_Off(int pin){
-    LATC = LATC & (~(1 << pin));
-    write_expander(EXPANDER_ADDR, LATC);
-}
+// Returns a range reading in millimeters when continuous mode is active
+// (readRangeSingleMillimeters() also calls this function after starting a
+// single-shot range measurement)
+uint16_t readRangeContinuousMillimeters(struct sensor_instance* sensor)
+{
+  startTimeout();
+  if ((readReg(sensor, RESULT_INTERRUPT_STATUS) & 0x07) == 0)
+  {
+    return sensor->last_measurement;
+  }
+  #ifdef OSC_TOF_READ
+  OSC_ON;
+  #endif
+  // assumptions: Linearity Corrective Gain is 1000 (default);
+  // fractional ranging is not enabled
+  uint16_t range = readReg16Bit(sensor, RESULT_RANGE_STATUS + 10);
 
-
-
-
-void samp_return(int turn_steps, int move_steps, double qrd_val){
-    static int state = 1;
-    static int white = 1;
-    switch(state){
-        case 1:
-            _OC3IE = 1;
-            steps = 0;
-            if(qrd_val < 2.5){
-                left_center();
-                white = 1;
-            }
-            else{
-                right_center();  
-                white = 0;
-            }
-            state = 2;
-            break;
-        case 2:
-            if(steps >= turn_steps){
-                steps = 0;
-                forward();
-                state = 3;
-            }
-            break;
-        case 3:
-            if(steps >= move_steps){
-                steps = 0;
-                stop_robot();
-                if(white ==1){
-                    Solenoid_On(5);
-                }
-                else{
-                    Solenoid_On(6);
-                }
-                state = 4;
-                i = 0;
-            }
-            break;
-        case 4:
-            i++;
-            if(i >= 25){
-                steps = 0;
-                Solenoid_Off(5);
-                Solenoid_Off(6);
-                reverse();
-                state = 5;
-                i = 0;
-            }
-            break;
-        case 5:
-            if(steps >= move_steps){
-                steps = 0;
-                left_center();
-                state = 6;
-            }
-            break;
-        case 6:
-            if(steps >= turn_steps){
-                _OC3IE = 0;
-                steps = 0;
-                ball = 2;
-                ss = line_s;
-            }
-            break;   
-    }
-    write_substate(state);
-}
-
-void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, int turn_steps, int pivot_steps){
-    static int state = 0;
-    switch(state){
-        case 0:
-            forward();
-            state = 1;
-            break;
-        case 1://left and right steppers same direction, same speed
-            if(vTOF_M <= threshold){
-                state = 2;
-            }
-            else if(qrdval <= 2.4){
-                if(vTOF_L < vTOF_R){
-                    right_pivot();
-                }
-                else{
-                    left_pivot();
-                }
-                steps = 0;
-                _OC3IE = 1;
-                state = 4;
-            }
-            break;
-        case 2:
-            if(vTOF_L < vTOF_R){
-                _OC3IE = 1; //enabled
-                right_center();
-                steps = 0;
-                state = 3;
-            }
-            else{
-                _OC3IE = 1;
-                left_center();
-                steps = 0;
-                state = 3;
-            }
-            break;
-        case 3:
-            if(steps >= turn_steps){
-                _OC3IE = 0;
-                forward();
-                state = 1;
-            }
-            break;
-        case 4:
-            if(steps >= pivot_steps){
-                steps = 0;
-                _OC3IE = 0;
-                ss = line_s;
-            }
-            break;    
-    }
-    write_substate(state);
-}
-
-uint16_t data_trans_low_angle = 0;
-uint16_t data_trans_high_angle = 0;
-bool is_data_trans_measurement_done = false;
-
-#define SERVO_PWM_PERIOD 40000 //calculated from 2MHz clock frequency for 50 Hz signal (from datasheet)
-#define SERVO_PWM_MIN_COUNT 1000 //0.5 ms (from datasheet)
-#define SERVO_PWM_MAX_COUNT 5000 //2.5 ms (from datasheet) 
-#define SERVO_PWM_MAX_COUNT_WE_ACTUALLY_GO_TO 3500 //2.5 ms (from datasheet) 
-//but we only go halfway there
-
-void data_trans(int first_steps, int second_steps, int third_steps){
-    static int state = 0;
-    switch(state){
-        case 0:
-            _OC3IE = 1;
-            forward();
-            steps = 0;
-            state = 1;
-            break;
-        case 1:
-            if(steps >= first_steps){
-                steps = 0;
-                left_center();
-                state = 2;
-            }
-            break;
-        case 2:
-            if(steps >= second_steps){
-                _OC3IE = 0;
-                _LATB4 = 0;
-                _LATA4 = 0;
-                steps = 0;
-                state = 3;
-            }
-            break;
-        case 3:
-            Nop();
-            double left_qrd = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
-            double mid_qrd = (double)ADC1BUF13/4095*3.3;
-            double right_qrd = (double)ADC1BUF14/4095*3.3;
-            uint16_t sensor = readRangeContinuousMillimeters(&(sensors[FRONT]));
-            line_follower(left_qrd, mid_qrd, right_qrd);
-            if(sensor <= 280){
-                _OC3IE = 1;
-                steps = 0;
-                forward();
-                state = 4;                  
-            }
-            break;
-        case 4:
-            if(steps >= third_steps){
-                _OC3IE = 0;
-                steps = 0;
-                stop_robot();
-                state = 5;
-                
-                //enable OC1 PWM interrupts
-                IEC0bits.OC1IE = 0b1;
-            }
-            break;
-        case 5:
-            //set up PWM then continually:
-            //increment PWM period
-            //Measure voltage
-
-            //The algorithm works like this:
-            //we have a high and a low threshold
-            //as we increase the angle, we measure the first time we cross above the high threshold
-            //and when we reach the low threshold again, we look at the last time we crossed below the high threshold
-            //find the midpoint of these two angles
-            //and aim at that
-
-            //this algorithm lives mostly in the interrupt handler TBH
-
-            if (is_data_trans_measurement_done) {
-                IEC0bits.OC1IE = 0b0;
-                state = 6;
-                OC1R = (data_trans_low_angle + data_trans_high_angle) / 2; //divided by two
-                //gotta wait for the motor to get in position before turning on the laser
-                //wait 0.15 seconds
-                T5CON = 0x8030;
-                PR5 = 0xFFFF; 
-                TMR5 = 0;
-            }
-            break;
-        case 6:
-            while (TMR5 < 1200) {} //wait 150 ms (blocking code, I know...)
-            LATBbits.LATB13 = 0b1; //turn on laser
-            state = 7; 
-            break;
-        case 7:
-            break;
-    }
-    write_substate(state);
+  writeReg(sensor, SYSTEM_INTERRUPT_CLEAR, 0x01);
+  #ifdef OSC_TOF_READ
+  OSC_OFF;
+  #endif
+  sensor->last_measurement = range;
+  return range;
 }
 
 
-//analog to digital is 12 bit where all 1s is 3.3V
-#define DATA_TRANS_LOW_THRESHOLD 0x600
-#define DATA_TRANS_HIGH_TRESHOLD 0x800
+//I'm using continuous mode; this can be commented out
 
-void __attribute__((interrupt, no_auto_psv)) _OC1Interrupt(void){
-    
-    uint16_t measurement = ADC1BUF10; //read from that photodiode
-    if (measurement > DATA_TRANS_HIGH_TRESHOLD) {
-        if (data_trans_low_angle == 0) {
-            data_trans_low_angle = OC1R;
-        }
-        data_trans_high_angle = OC1R;
-    }
-    else {
-        if ((measurement < DATA_TRANS_LOW_THRESHOLD) && (data_trans_low_angle != 0)) {
-            is_data_trans_measurement_done = true;
-        }
+// Performs a single-shot range measurement and returns the reading in
+// millimeters
+// based on VL53L0X_PerformSingleRangingMeasurement()
+//uint16_t readRangeSingleMillimeters(struct sensor_instance* sensor)
+//{
+//  writeReg(sensor, 0x80, 0x01);
+//  writeReg(sensor, 0xFF, 0x01);
+//  writeReg(sensor, 0x00, 0x00);
+//  writeReg(sensor, 0x91, sensor->stop_variable);
+//  writeReg(sensor, 0x00, 0x01);
+//  writeReg(sensor, 0xFF, 0x00);
+//  writeReg(sensor, 0x80, 0x00);
+//
+//  writeReg(sensor, SYSRANGE_START, 0x01);
+//
+//  // "Wait until start bit has been cleared"
+//  startTimeout();
+//  while (readReg(sensor, SYSRANGE_START) & 0x01)
+//  {
+//    if (checkTimeoutExpired(sensor))
+//    {
+//      sensor->did_timeout = true;
+//      return 65535;
+//    }
+//  }
+//
+//  return readRangeContinuousMillimeters(sensor);
+//}
+
+// Did a timeout occur in one of the read functions since the last call to
+// timeoutOccurred()?
+bool timeoutOccurred(struct sensor_instance* sensor)
+{
+  bool tmp = sensor->did_timeout;
+  sensor->did_timeout = false;
+  return tmp;
+}
+
+// Private Methods /////////////////////////////////////////////////////////////
+
+// Get reference SPAD (single photon avalanche diode) count and type
+// based on VL53L0X_get_info_from_device(),
+// but only gets reference SPAD count and type
+bool getSpadInfo(struct sensor_instance* sensor, uint8_t * count, bool * type_is_aperture)
+{
+  uint8_t tmp;
+
+  writeReg(sensor, 0x80, 0x01);
+  writeReg(sensor, 0xFF, 0x01);
+  writeReg(sensor, 0x00, 0x00);
+
+  writeReg(sensor, 0xFF, 0x06);
+  writeReg(sensor, 0x83, readReg(sensor, 0x83) | 0x04);
+  writeReg(sensor, 0xFF, 0x07);
+  writeReg(sensor, 0x81, 0x01);
+
+  writeReg(sensor, 0x80, 0x01);
+
+  writeReg(sensor, 0x94, 0x6b);
+  writeReg(sensor, 0x83, 0x00);
+  startTimeout();
+  while (readReg(sensor, 0x83) == 0x00)
+  {
+    if (checkTimeoutExpired(sensor)) { return false; }
+  }
+  writeReg(sensor, 0x83, 0x01);
+  tmp = readReg(sensor, 0x92);
+
+  *count = tmp & 0x7f;
+  *type_is_aperture = (tmp >> 7) & 0x01;
+
+  writeReg(sensor, 0x81, 0x00);
+  writeReg(sensor, 0xFF, 0x06);
+  writeReg(sensor, 0x83, readReg(sensor, 0x83)  & ~0x04);
+  writeReg(sensor, 0xFF, 0x01);
+  writeReg(sensor, 0x00, 0x01);
+
+  writeReg(sensor, 0xFF, 0x00);
+  writeReg(sensor, 0x80, 0x00);
+
+  return true;
+}
+
+// Get sequence step enables
+// based on VL53L0X_GetSequenceStepEnables()
+//void getSequenceStepEnables(struct sensor_instance* sensor, struct SequenceStepEnables * enables)
+//{
+//  uint8_t sequence_config = readReg(sensor, SYSTEM_SEQUENCE_CONFIG);
+//
+//  enables->tcc          = (sequence_config >> 4) & 0x1;
+//  enables->dss          = (sequence_config >> 3) & 0x1;
+//  enables->msrc         = (sequence_config >> 2) & 0x1;
+//  enables->pre_range    = (sequence_config >> 6) & 0x1;
+//  enables->final_range  = (sequence_config >> 7) & 0x1;
+//}
+
+// Get sequence step timeouts
+// based on get_sequence_step_timeout(),
+// but gets all timeouts instead of just the requested one, and also stores
+// intermediate values
+//void getSequenceStepTimeouts(struct sensor_instance* sensor, struct SequenceStepEnables const * enables, struct SequenceStepTimeouts * timeouts)
+//{
+//  timeouts->pre_range_vcsel_period_pclks = getVcselPulsePeriod(sensor, VcselPeriodPreRange);
+//
+//  timeouts->msrc_dss_tcc_mclks = readReg(sensor, MSRC_CONFIG_TIMEOUT_MACROP) + 1;
+//  timeouts->msrc_dss_tcc_us =
+//    timeoutMclksToMicroseconds(timeouts->msrc_dss_tcc_mclks,
+//                               timeouts->pre_range_vcsel_period_pclks);
+//
+//  timeouts->pre_range_mclks =
+//    decodeTimeout(readReg16Bit(sensor, PRE_RANGE_CONFIG_TIMEOUT_MACROP_HI));
+//  timeouts->pre_range_us =
+//    timeoutMclksToMicroseconds(timeouts->pre_range_mclks,
+//                               timeouts->pre_range_vcsel_period_pclks);
+//
+//  timeouts->final_range_vcsel_period_pclks = getVcselPulsePeriod(sensor, VcselPeriodFinalRange);
+//
+//  timeouts->final_range_mclks =
+//    decodeTimeout(readReg16Bit(sensor, FINAL_RANGE_CONFIG_TIMEOUT_MACROP_HI));
+//
+//  if (enables->pre_range)
+//  {
+//    timeouts->final_range_mclks -= timeouts->pre_range_mclks;
+//  }
+//
+//  timeouts->final_range_us =
+//    timeoutMclksToMicroseconds(timeouts->final_range_mclks,
+//                               timeouts->final_range_vcsel_period_pclks);
+//}
+
+// Decode sequence step timeout in MCLKs from register value
+// based on VL53L0X_decode_timeout()
+// Note: the original function returned a uint32_t, but the return value is
+// always stored in a uint16_t.
+//uint16_t decodeTimeout(uint16_t reg_val)
+//{
+//  // format: "(LSByte * 2^MSByte) + 1"
+//  return (uint16_t)((reg_val & 0x00FF) <<
+//         (uint16_t)((reg_val & 0xFF00) >> 8)) + 1;
+//}
+
+// Encode sequence step timeout register value from timeout in MCLKs
+// based on VL53L0X_encode_timeout()
+uint16_t encodeTimeout(uint32_t timeout_mclks)
+{
+  // format: "(LSByte * 2^MSByte) + 1"
+
+  uint32_t ls_byte = 0;
+  uint16_t ms_byte = 0;
+
+  if (timeout_mclks > 0)
+  {
+    ls_byte = timeout_mclks - 1;
+
+    while ((ls_byte & 0xFFFFFF00) > 0)
+    {
+      ls_byte >>= 1;
+      ms_byte++;
     }
 
-    OC1R += 30; //takes 1.5 seconds to move 90 degrees
-    if (OC1R > (SERVO_PWM_MAX_COUNT_WE_ACTUALLY_GO_TO)) { //find failed, start over
-        data_trans_low_angle = 0;
-        OC1R = SERVO_PWM_MIN_COUNT; 
-        T5CON = 0x8030;
-        PR5 = 0xFFFF; 
-        TMR5 = 0;
-        while (TMR5 < 1200) {}
-    }
-    _OC1IF = 0;
+    return (ms_byte << 8) | (ls_byte & 0xFF);
+  }
+  else { return 0; }
 }
 
-void __attribute__((interrupt, no_auto_psv)) _OC3Interrupt(void){
-    
-    steps ++;
-    _OC3IF = 0;
-    
+// Convert sequence step timeout from MCLKs to microseconds with given VCSEL period in PCLKs
+// based on VL53L0X_calc_timeout_us()
+//uint32_t timeoutMclksToMicroseconds(uint16_t timeout_period_mclks, uint8_t vcsel_period_pclks)
+//{
+//  uint32_t macro_period_ns = calcMacroPeriod(vcsel_period_pclks);
+//
+//  return ((timeout_period_mclks * macro_period_ns) + 500) / 1000;
+//}
+
+// Convert sequence step timeout from microseconds to MCLKs with given VCSEL period in PCLKs
+// based on VL53L0X_calc_timeout_mclks()
+uint32_t timeoutMicrosecondsToMclks(uint32_t timeout_period_us, uint8_t vcsel_period_pclks)
+{
+  uint32_t macro_period_ns = calcMacroPeriod(vcsel_period_pclks);
+
+  return (((timeout_period_us * 1000) + (macro_period_ns >> 1)) / macro_period_ns);
 }
 
-struct sensor_instance sensors[NUM_OF_TOFS];
 
+// based on VL53L0X_perform_single_ref_calibration()
+bool performSingleRefCalibration(struct sensor_instance* sensor, uint8_t vhv_init_byte)
+{
+  writeReg(sensor, SYSRANGE_START, 0x01 | vhv_init_byte); // VL53L0X_REG_SYSRANGE_MODE_START_STOP
 
+  startTimeout();
+  while ((readReg(sensor, RESULT_INTERRUPT_STATUS) & 0x07) == 0)
+  {
+    if (checkTimeoutExpired(sensor)) { return false; }
+  }
 
-int main(void) {
+  writeReg(sensor, SYSTEM_INTERRUPT_CLEAR, 0x01);
 
-    config_pins_for_ad();
-    config_ad();
-    
-    _RCDIV = 0b001;
-    OC3CON1 = 0; // sets all settings to 0 for 1 and 2 ALL for pin 14/RA6
-    OC3CON2 = 0;
-    OC3CON1bits.OCTSEL = 0b111; // system clock chosen
-    OC3CON2bits.SYNCSEL = 0b11111; // output compare module
-    OC3CON2bits.OCTRIG = 0; // he says just do this one
-    
-    OC2CON1 = 0; // same thing on pin 4/RB0
-    OC2CON2 = 0;
-    OC2CON1bits.OCTSEL = 0b111; //
-    OC2CON2bits.SYNCSEL = 0b11111; //
-    OC2CON2bits.OCTRIG = 0; //
+  writeReg(sensor, SYSRANGE_START, 0x00);
 
-
-
-    //set up servo PWM:
-    TRISAbits.TRISA6 = 0;
-    OC1CON1 = 0; // sets all settings to 0 for 1 and 2 ALL for pin 14/RA6
-    OC1CON2 = 0;
-    OC1CON1bits.OCTSEL = 0b111; // system clock chosen
-    OC1CON2bits.SYNCSEL = 0b11111; // output compare module
-    OC1CON2bits.OCTRIG = 0;
-    OC1CON1bits.OCM = 0b110; //edge aligned pwm; enables the PWM output
-    OC1RS = SERVO_PWM_PERIOD;
-    OC1R = SERVO_PWM_MIN_COUNT; 
-    //this keeps the servo at 0 degrees for most of the course
-    TRISBbits.TRISB13 = 0b0; //set up laser pin
-    LATBbits.LATB13 = 0b0;
-    
-    //Stepper 1/left pins
-    _TRISB1 = 0; //pwm pin 14
-    _LATB1 = 0;
-    _TRISB4 = 0;// direction pin
-    _LATB4 = 0;
-    
-    //Stepper 2/right pins
-    _TRISB0 = 0; // pwm pin 4
-    _LATB0 = 0;
-    _TRISA4 = 0;// direction pin
-    _LATA4 = 0;
-    
-
-            
-    //set up pwm 
-    OC3CON1bits.OCM = 0b110; //edge aligned pwm
-    OC2CON1bits.OCM = 0b110;
-    
-    OC3RS = 12049; //frequency and duty cycle of each
-    OC3R = 6000;
-    
-    OC2RS = 12049;
-    OC2R = 6000;
-    
-    //interrupt setup
-    _OC3IP = 4; // Select the interrupt priority
-    _OC3IE = 0; // disable the OC3 interrupt for now
-    _OC3IF = 0; // Clear the interrupt flag
-    
-    _OC1IP = 5; // Select the interrupt priority
-    _OC1IE = 0; // disable the OC3 interrupt for now
-    _OC1IF = 0; // Clear the interrupt flag
-    
-    init_i2c();
-    
-    //get expander in a known state
-    LATD = 0x00;
-    write_expander(LED_ARR_ADDR, LATD); 
-    
-    init_tofs();
-    
-    while(1){
-
-        switch(ss){
-            case start_s:
-                findline1();
-                break;
-            case line_s:
-                TOF_samp = readRangeContinuousMillimeters(&(sensors[SAMPLE_RETURN]));
-                TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
-                TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
-                
-                leftval = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
-                midval = (double)ADC1BUF13/4095*3.3;
-                rightval = (double)ADC1BUF14/4095*3.3;
-                line_follower(leftval, midval, rightval);
-                /*if(_RB12 == 0 && ball == 0){
-                    ss = collection_s;
-                }
-                if((ball == 1 && TOF_samp < threshold) && (TOF_r > threshold)){
-                    ss = samp_return_s;
-                }
-                if(TOF_l < threshold && TOF_r < threshold){
-                    ss = canyon_s;
-                }*/
-                if(leftval < 2.6 && midval < 2.9){
-                    ss = data_trans_s;
-                }
-                break;
-            case collection_s:
-                samp_collect(280,220,140);
-                break;
-            case samp_return_s:
-                Nop();
-                double sampval = (double)ADC1BUF0/4095*3.3;
-                samp_return(200, 250, sampval);
-                break;
-            case canyon_s:
-                TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
-                TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
-                TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
-                leftval = (double)ADC1BUF1/4095*3.3;
-                canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
-                break;
-            case data_trans_s:
-                data_trans(55, 140, 120);
-                break;
-        }
-        write_state(ss);
-    }
-    return 0;
+  return true;
 }
