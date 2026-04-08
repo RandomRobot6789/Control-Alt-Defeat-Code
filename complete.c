@@ -749,12 +749,7 @@ int main(void) {
     init_tofs();
     
     while(1){
-                TOF_samp = readRangeContinuousMillimeters(&(sensors[SAMPLE_RETURN]));
-                TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
-                TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
-                TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
-
-        /*switch(ss){
+        switch(ss){
             case start_s:
                 findline1();
                 break;
@@ -798,7 +793,7 @@ int main(void) {
             case data_trans_s:
                 data_trans(55, 140, 120);
                 break;
-        }*/
+        }
         write_state(ss);
     }
     return 0;
