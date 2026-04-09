@@ -100,6 +100,7 @@
     double leftval = 0; //pin 13
     double midval = 0; //read from pin 14
     double rightval = 0; // pin 15
+    double sampval = 0;
 
     double goal = 2.5;//These are the midline values for each sensor mid sensor
     double goal_l = 2.75; //left sensor
@@ -120,9 +121,9 @@
 
     double fcy = 2000000;
 
-    double max_freq = 351;//This is the fastest we want the steppers to move
-    double min_freq = 85;//slowest
-    double std_freq = 218;
+    double max_freq = 439;//This is the fastest we want the steppers to move
+    double min_freq = 106;//slowest
+    double std_freq = 272;
 
     int ball = 0;
     int steps = 0;
@@ -131,6 +132,9 @@
     enum superstate {start_s, line_s, collection_s, canyon_s, samp_return_s, data_trans_s};
 
     enum superstate ss = start_s;
+    
+    int drivespeed = 9000;
+    
 
     uint16_t threshold = 165;
 
@@ -262,50 +266,50 @@
             }
     }
     void forward(){
-        OC3RS = 12049;
-        OC2RS = 12049;
-        OC2R = 6000;
-        OC3R = 6000;
+        OC3RS = drivespeed;
+        OC2RS = drivespeed;
+        OC2R = .5*drivespeed;
+        OC3R = .5*drivespeed;
         _LATB4 = 0;
         _LATA4 = 0;
     }
     void left_center(){
-        OC3RS = 12049;
-        OC2RS = 12049;
-        OC2R = 6000;
-        OC3R = 6000;
+        OC3RS = drivespeed;
+        OC2RS = drivespeed;
+        OC2R = .5*drivespeed;
+        OC3R = .5*drivespeed;
         _LATB4 = 1;
         _LATA4 = 0;
     }
     void right_center(){
-        OC3RS = 12049;
-        OC2RS = 12049;
-        OC2R = 6000;
-        OC3R = 6000;
+        OC3RS = drivespeed;
+        OC2RS = drivespeed;
+        OC2R = .5*drivespeed;
+        OC3R = .5*drivespeed;
         _LATB4 = 0;
         _LATA4 = 1;
     }
     void left_pivot(){
-        OC3RS = 12049;
-        OC2RS = 12049;
-        OC2R = 6000;
+        OC3RS = drivespeed;
+        OC2RS = drivespeed;
+        OC2R = .5*drivespeed;
         OC3R = 0;
         _LATB4 = 0;
         _LATA4 = 0;
     }
     void right_pivot(){
-        OC3RS = 12049;
-        OC2RS = 12049;
+        OC3RS = drivespeed;
+        OC2RS = drivespeed;
         OC2R = 0;
-        OC3R = 6000;
+        OC3R = .5*drivespeed;
         _LATB4 = 0;
         _LATA4 = 0;
     }
     void reverse(){
-        OC3RS = 12049;
-        OC2RS = 12049;
-        OC2R = 6000;
-        OC3R = 6000;
+        OC3RS = drivespeed;
+        OC2RS = drivespeed;
+        OC2R = .5*drivespeed;
+        OC3R = .5*drivespeed;
         _LATB4 = 1;
         _LATA4 = 1;
     }
@@ -411,7 +415,7 @@
 
 
 
-    void samp_return(int turn_steps, int move_steps, double qrd_val){
+    void samp_return(int turn_steps, int move_steps, double qrd_val, int waitval){
         static int state = 1;
         static int white = 1;
         switch(state){
@@ -451,9 +455,9 @@
                 break;
             case 4:
                 i++;
-                if(i >= 25){
+                if(i >= waitval){
                     steps = 0;
-                    Solenoid_Off(5);
+                    Solenoid_Off(7);
                     Solenoid_Off(6);
                     reverse();
                     state = 5;
@@ -463,7 +467,12 @@
             case 5:
                 if(steps >= move_steps){
                     steps = 0;
-                    left_center();
+                    if(white == 1){
+                        right_center();
+                    }
+                    else{
+                        left_center();
+                    }
                     state = 6;
                 }
                 break;
@@ -483,6 +492,7 @@
 
     void canyon(uint16_t vTOF_L, uint16_t vTOF_M, uint16_t vTOF_R, double qrdval, int turn_steps, int pivot_steps){
         static int state = 0;
+        static int steps_required = 0;
         switch(state){
             case 0:
                 forward();
@@ -492,12 +502,14 @@
                 if(vTOF_M <= threshold){
                     state = 2;
                 }
-                else if(qrdval <= 2.4){
+                else if(qrdval <= 2.6){
                     if(vTOF_L < vTOF_R){
-                        right_pivot();
+                        right_center();
+                        steps_required = 140;
                     }
                     else{
                         left_pivot();
+                        steps_required = 280;
                     }
                     steps = 0;
                     _OC3IE = 1;
@@ -526,8 +538,10 @@
                 }
                 break;
             case 4:
-                if(steps >= pivot_steps){
+                if(steps >= steps_required){
                     steps = 0;
+                    _LATB4 = 0;
+                    _LATA4 = 0;
                     _OC3IE = 0;
                     ss = line_s;
                 }
@@ -727,11 +741,11 @@
         OC3CON1bits.OCM = 0b110; //edge aligned pwm
         OC2CON1bits.OCM = 0b110;
 
-        OC3RS = 12049; //frequency and duty cycle of each
-        OC3R = 6000;
+        OC3RS = drivespeed; //frequency and duty cycle of each
+        OC3R = .5*drivespeed;
 
-        OC2RS = 12049;
-        OC2R = 6000;
+        OC2RS = drivespeed;
+        OC2R = .5*drivespeed;
 
         //interrupt setup
         _OC3IP = 4; // Select the interrupt priority
@@ -751,8 +765,14 @@
         init_tofs();
 
         while(1){
-
-        
+//            sampval = (double)ADC1BUF0/4095*3.3;
+//            leftval = (double)ADC1BUF1/4095*3.3;//collect voltages from QRD's
+//            midval = (double)ADC1BUF13/4095*3.3;
+//            rightval = (double)ADC1BUF14/4095*3.3;
+//            TOF_samp = readRangeContinuousMillimeters(&(sensors[SAMPLE_RETURN]));
+//            TOF_r = readRangeContinuousMillimeters(&(sensors[RIGHT]));
+//            TOF_l = readRangeContinuousMillimeters(&(sensors[LEFT]));
+//            TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));            
             switch(ss){
                 case start_s:
                     findline1();
@@ -769,10 +789,10 @@
                     if(_RB12 == 0 && ball == 0){
                         ss = collection_s;
                     }
-                    if((ball == 1 && TOF_samp < 300) && (TOF_r > 300)){
+                    if((ball == 1 && TOF_samp < 225) && (TOF_r > 225)){
                         ss = samp_return_s;
                     }
-                    if(TOF_l < 300 && TOF_r < 300){
+                    if(TOF_l < 400 && TOF_r < 400){
                         ss = canyon_s;
                     }
                     if(leftval < 2.6 && midval < 2.9){
@@ -784,8 +804,8 @@
                     break;
                 case samp_return_s:
                     Nop();
-                    double sampval = (double)ADC1BUF0/4095*3.3;
-                    samp_return(200, 250, sampval);
+                    sampval = (double)ADC1BUF0/4095*3.3;
+                    samp_return(70, 100, sampval, 3000);
                     break;
                 case canyon_s:
                     TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
@@ -795,7 +815,7 @@
                     canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
                     break;
                 case data_trans_s:
-                    data_trans(55, 140, 120);
+                    data_trans(55, 140, 100);
                     break;
             }
             write_state(ss);
