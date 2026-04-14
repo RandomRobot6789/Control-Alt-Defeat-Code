@@ -136,7 +136,7 @@
     int drivespeed = 9000;
     
 
-    uint16_t threshold = 165;
+    uint16_t threshold = 240;
 
 
 
@@ -205,8 +205,16 @@
 
     void adjust_differential(uint16_t left) {
         static uint16_t old_left = 0;
-        int base_oc2rs = 1249;
-        OC2RS =  base_oc2rs + ((left - old_left)>>2);//right wheel period;
+        int base_oc2rs = drivespeed;
+        if(left < old_left){
+            OC3RS = drivespeed - 1000;
+            OC3R = .5*OC3RS;
+        }
+        else{
+            OC3RS = drivespeed + 1000;
+            OC3R = .5*OC3RS;
+        }
+        //OC3RS =  base_oc2rs - ((left - old_left)>>2);//left wheel period;
         old_left = left;
     }
 
@@ -499,6 +507,7 @@
                 state = 1;
                 break;
             case 1://left and right steppers same direction, same speed
+                adjust_differential(vTOF_L);
                 if(vTOF_M <= threshold){
                     state = 2;
                 }
@@ -509,7 +518,7 @@
                     }
                     else{
                         left_pivot();
-                        steps_required = 280;
+                        steps_required = 260;
                     }
                     steps = 0;
                     _OC3IE = 1;
@@ -789,13 +798,13 @@
                     if(_RB12 == 0 && ball == 0){
                         ss = collection_s;
                     }
-                    if((ball == 1 && TOF_samp < 225) && (TOF_r > 225)){
+                    if((ball == 1 && TOF_samp < 160) && (TOF_r > 160)){
                         ss = samp_return_s;
                     }
                     if(TOF_l < 400 && TOF_r < 400){
                         ss = canyon_s;
                     }
-                    if(leftval < 2.6 && midval < 2.9){
+                    if((leftval < 2.6 && midval < 2.9) && ball == 2){
                         ss = data_trans_s;
                     }
                     break;
@@ -805,7 +814,7 @@
                 case samp_return_s:
                     Nop();
                     sampval = (double)ADC1BUF0/4095*3.3;
-                    samp_return(70, 100, sampval, 3000);
+                    samp_return(75,100,sampval, 3000);
                     break;
                 case canyon_s:
                     TOF_m = readRangeContinuousMillimeters(&(sensors[FRONT]));
@@ -815,7 +824,7 @@
                     canyon(TOF_l, TOF_m, TOF_r, leftval, 140, 250);
                     break;
                 case data_trans_s:
-                    data_trans(55, 140, 100);
+                    data_trans(45, 140, 75);
                     break;
             }
             write_state(ss);
